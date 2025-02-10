@@ -127,6 +127,27 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.employeeId) return new Response('Unauthorized', { status: 401 });
 
     const data = await req.json();
+    
+    // Handle WebRTC signaling
+    if (data.type === 'webrtc_signaling') {
+      const recipientControllers = messageStreams.get(data.receiverId);
+      if (recipientControllers) {
+        const message = {
+          type: 'webrtc_signaling',
+          payload: data.payload,
+          senderId: session.user.employeeId
+        };
+        recipientControllers.forEach((controller) => {
+          try {
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(message)}\n\n`));
+          } catch (error) {
+            console.error('[SSE] WebRTC signal error:', error);
+          }
+        });
+      }
+      return new Response('OK');
+    }
+
     const encoder = new TextEncoder();
 
     // Get recipient's controllers

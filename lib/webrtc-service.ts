@@ -3,114 +3,108 @@ const ICE_SERVERS = {
     {
       urls: [
         'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302',
-        'stun:stun3.l.google.com:19302',
-        'stun:stun4.l.google.com:19302',
-        'stun:stun.l.google.com:19302',
-        'stun:global.stun.twilio.com:3478'
+        'stun:stun2.l.google.com:19302'
       ]
     }
   ],
-  iceCandidatePoolSize: 10,
-  iceTransportPolicy: 'all',
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require'
+  iceCandidatePoolSize: 10
 };
 
-export class WebRTCService {
+// Define interface for public methods
+interface IWebRTCService {
+  initializeCall(enableVideo: boolean): Promise<MediaStream>;
+  cleanup(): void;
+  setOnStreamUpdate(callback: (stream: MediaStream) => void): void;
+  getLocalStream(): MediaStream | null;
+  onConnectionStateChange(handler: (state: RTCPeerConnectionState) => void): void;
+  offConnectionStateChange(): void;
+  createOffer(): Promise<RTCSessionDescriptionInit>;
+  handleSignalingMessage(message: any): Promise<void>;
+  getConnectionState(): RTCPeerConnectionState | null;
+  handleOffer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit>;
+  handleAnswer(answer: RTCSessionDescriptionInit): Promise<void>;
+  setLocalDescription(description: RTCSessionDescriptionInit): Promise<void>;
+}
+
+class WebRTCService implements IWebRTCService {
   private peerConnection: RTCPeerConnection | null = null;
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
-  private onIceCandidate: ((candidate: RTCIceCandidate) => void) | null = null;
   private onStreamHandler: ((stream: MediaStream) => void) | null = null;
-  private activeCallId: string | null = null;
+  private pendingCandidates: RTCIceCandidate[] = [];
   private connectionStateHandler: ((state: RTCPeerConnectionState) => void) | null = null;
 
+  constructor() {
+    if (typeof window !== 'undefined') {
+      this.initializePeerConnection();
+    }
+  }
+
+  private initializePeerConnection() {
+    if (typeof window === 'undefined') return;
+
+    try {
+      this.peerConnection = new window.RTCPeerConnection(ICE_SERVERS);
+      this.setupConnectionHandlers();
+    } catch (error) {
+      console.error('[WebRTC] Failed to initialize:', error);
+    }
+  }
+
+  private setupConnectionHandlers() {
+    if (!this.peerConnection) return;
+
+    this.peerConnection.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        this.emitSignalingMessage({ type: 'ice_candidate', candidate });
+      }
+    };
+
+    this.peerConnection.ontrack = (event) => {
+      this.remoteStream = event.streams[0];
+      if (this.onStreamHandler) {
+        this.onStreamHandler(event.streams[0]);
+      }
+    };
+
+    this.peerConnection.onconnectionstatechange = () => {
+      console.log('[WebRTC] Connection state:', this.peerConnection?.connectionState);
+      if (this.connectionStateHandler && this.peerConnection) {
+        this.connectionStateHandler(this.peerConnection.connectionState);
+      }
+      if (this.peerConnection?.connectionState === 'failed') {
+        this.peerConnection.restartIce();
+      }
+    };
+  }
+
   private async ensurePeerConnection(): Promise<RTCPeerConnection> {
+    if (typeof window === 'undefined') {
+      throw new Error('WebRTC is only available in browser environment');
+    }
+
     if (!this.peerConnection) {
-      this.peerConnection = new RTCPeerConnection(ICE_SERVERS);
+      this.peerConnection = new window.RTCPeerConnection(ICE_SERVERS);
       this.setupConnectionHandlers();
     }
     return this.peerConnection;
   }
 
-  private logPeerState() {
-    if (!this.peerConnection) return;
-    
-    console.log('[WebRTC] State:', {
-      connectionState: this.peerConnection.connectionState,
-      iceConnectionState: this.peerConnection.iceConnectionState,
-      iceGatheringState: this.peerConnection.iceGatheringState,
-      signalingState: this.peerConnection.signalingState,
-      hasLocalStream: !!this.localStream,
-      hasRemoteStream: !!this.remoteStream,
-      activeCallId: this.activeCallId
-    });
-  }
-
-   getActiveCallId(): string | null {
-    return this.activeCallId;
-  }
-
-  getRemoteStream(): MediaStream | null {
-    return this.remoteStream;
-  }
-
-  setConnectionStateHandler(handler: (state: RTCPeerConnectionState) => void): void {
-    this.connectionStateHandler = handler;
-    
-    // Apply handler to current connection if exists
-    if (this.peerConnection) {
-      this.peerConnection.onconnectionstatechange = () => {
-        handler(this.peerConnection!.connectionState);
-      };
-    }
-  }
-
-  async initializeCall(enableVideo: boolean, onIceCandidate: (candidate: RTCIceCandidate) => void): Promise<MediaStream> {
+  async initializeCall(enableVideo: boolean): Promise<MediaStream> {
     try {
-      console.log('[WebRTC] Initializing call with config:', ICE_SERVERS);
-      
-      // Cleanup any existing connections
       this.cleanup();
-
-      // Create new peer connection with enhanced logging
-      this.peerConnection = new RTCPeerConnection(ICE_SERVERS);
+      this.peerConnection = new window.RTCPeerConnection(ICE_SERVERS);
       this.setupConnectionHandlers();
-      this.onIceCandidate = onIceCandidate;
 
-      // Log ICE gathering state changes
-      this.peerConnection.onicegatheringstatechange = () => {
-        console.log('[WebRTC] ICE gathering state:', this.peerConnection?.iceGatheringState);
+      const constraints = {
+        audio: { echoCancellation: true, noiseSuppression: true },
+        video: enableVideo ? { width: 1280, height: 720 } : false
       };
 
-      // Get media with fallback
-      try {
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: enableVideo
-        });
-      } catch (mediaError) {
-        console.error('[WebRTC] Media error:', mediaError);
-        // Fallback to audio only if video fails
-        if (enableVideo) {
-          console.log('[WebRTC] Falling back to audio only');
-          this.localStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: false
-          });
-        } else {
-          throw mediaError;
-        }
-      }
-
-      // Add tracks with error handling
+      this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
       this.localStream.getTracks().forEach(track => {
-        if (!this.peerConnection || !this.localStream) return;
-        try {
+        if (this.peerConnection && this.localStream) {
           this.peerConnection.addTrack(track, this.localStream);
-        } catch (error) {
-          console.error('[WebRTC] Failed to add track:', error);
         }
       });
 
@@ -122,83 +116,23 @@ export class WebRTCService {
     }
   }
 
-  private setupConnectionHandlers(): void {
-    if (!this.peerConnection) return;
-
-    this.peerConnection.onicecandidate = ({ candidate }) => {
-      if (candidate && this.onIceCandidate) {
-        this.onIceCandidate(candidate);
-      }
-    };
-
-    this.peerConnection.ontrack = (event) => {
-      if (this.onStreamHandler) {
-        this.onStreamHandler(event.streams[0]);
-      }
-    };
-
-    this.peerConnection.onconnectionstatechange = () => {
-      const currentState = this.peerConnection?.connectionState;
-      if (currentState && this.connectionStateHandler) {
-        this.connectionStateHandler(currentState);
-      }
-    };
-
-    this.peerConnection.oniceconnectionstatechange = () => {
-      console.log('[WebRTC] ICE state:', this.peerConnection?.iceConnectionState);
-      
-      // Auto-restart ICE if it fails
-      if (this.peerConnection?.iceConnectionState === 'failed') {
-        this.peerConnection.restartIce();
-      }
-    };
-
-    this.peerConnection.oniceconnectionstatechange = () => {
-      this.logPeerState();
-      if (this.connectionStateHandler) {
-        this.connectionStateHandler();
-      }
-    };
-
-    this.peerConnection.onconnectionstatechange = () => {
-      this.logPeerState();
-      if (this.connectionStateHandler) {
-        this.connectionStateHandler();
-      }
-    };
-  }
-
-  private async resetSignalingState() {
-    if (!this.peerConnection) return;
+  async createOffer(): Promise<RTCSessionDescriptionInit> {
+    const pc = await this.ensurePeerConnection();
     
     try {
-      if (this.peerConnection.signalingState !== 'stable') {
-        console.warn('[WebRTC] Resetting unstable connection state');
-        // Create empty rollback description
-        const rollback = new RTCSessionDescription({ type: 'rollback', sdp: '' });
-        await this.peerConnection.setLocalDescription(rollback);
+      // Reset signaling state if needed
+      if (pc.signalingState !== 'stable') {
+        console.warn('[WebRTC] Resetting unstable signaling state');
+        await pc.setLocalDescription({ type: 'rollback' });
       }
-    } catch (error) {
-      console.error('[WebRTC] Failed to reset signaling state:', error);
-    }
-  }
 
-  async createOffer(): Promise<RTCSessionDescriptionInit> {
-    if (!this.peerConnection) {
-      throw new Error('Peer connection not initialized');
-    }
-
-    try {
-      await this.resetSignalingState();
-      
-      const offer = await this.peerConnection.createOffer({
+      const offer = await pc.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: true
       });
-
-      await this.peerConnection.setLocalDescription(offer);
-      console.log('[WebRTC] Local description set:', offer.type);
       
+      await pc.setLocalDescription(offer);
+      console.log('[WebRTC] Created and set local offer:', offer.type);
       return offer;
     } catch (error) {
       console.error('[WebRTC] Create offer error:', error);
@@ -206,22 +140,31 @@ export class WebRTCService {
     }
   }
 
-  async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
+  async handleSignalingMessage(message: any) {
     const pc = await this.ensurePeerConnection();
-    if (!answer?.type) throw new Error('Invalid SDP answer');
 
     try {
-      // Only set remote description if we're in the right state
-      if (pc.signalingState === 'have-local-offer') {
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-        console.log('[WebRTC] Remote description set successfully');
-        this.logPeerState();
-      } else {
-        console.warn('[WebRTC] Cannot set remote description in state:', pc.signalingState);
+      switch (message.type) {
+        case 'offer':
+          const answer = await this.handleOffer(message);
+          this.emitSignalingMessage(answer);
+          break;
+
+        case 'answer':
+          await this.handleAnswer(message);
+          break;
+
+        case 'ice_candidate':
+          const candidate = new window.RTCIceCandidate(message.candidate);
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(candidate);
+          } else {
+            this.pendingCandidates.push(candidate);
+          }
+          break;
       }
     } catch (error) {
-      console.error('[WebRTC] Handle answer failed:', error);
-      throw error;
+      console.error('[WebRTC] Signaling error:', error);
     }
   }
 
@@ -229,15 +172,15 @@ export class WebRTCService {
     const pc = await this.ensurePeerConnection();
 
     try {
-      // Reset signaling state if needed
       if (pc.signalingState !== 'stable') {
-        console.warn('[WebRTC] Resetting unstable connection state');
-        await pc.setLocalDescription({ type: 'rollback', sdp: '' });
+        console.warn('[WebRTC] Resetting unstable signaling state');
+        await pc.setLocalDescription({ type: 'rollback' });
       }
 
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      await pc.setRemoteDescription(new window.RTCSessionDescription(offer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      console.log('[WebRTC] Created and set local answer');
       return answer;
     } catch (error) {
       console.error('[WebRTC] Handle offer error:', error);
@@ -245,18 +188,34 @@ export class WebRTCService {
     }
   }
 
-  async handleIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
-    if (!this.peerConnection) {
-      throw new Error('Peer connection not initialized');
-    }
+  async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
+    const pc = await this.ensurePeerConnection();
 
     try {
-      await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-      console.log('[WebRTC] Added ICE candidate');
+      if (pc.signalingState === 'have-local-offer') {
+        await pc.setRemoteDescription(new window.RTCSessionDescription(answer));
+        console.log('[WebRTC] Set remote answer successfully');
+      } else {
+        console.warn('[WebRTC] Cannot set remote answer in state:', pc.signalingState);
+      }
     } catch (error) {
-      console.error('[WebRTC] Failed to add ICE candidate:', error);
+      console.error('[WebRTC] Handle answer error:', error);
       throw error;
     }
+  }
+
+  async setLocalDescription(description: RTCSessionDescriptionInit): Promise<void> {
+    const pc = await this.ensurePeerConnection();
+    await pc.setLocalDescription(new window.RTCSessionDescription(description));
+    console.log('[WebRTC] Set local description:', description.type);
+  }
+
+  private emitSignalingMessage(message: any) {
+    fetch('/api/sse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'webrtc_signaling', payload: message })
+    }).catch(console.error);
   }
 
   setOnStreamUpdate(callback: (stream: MediaStream) => void): void {
@@ -277,28 +236,14 @@ export class WebRTCService {
     this.connectionStateHandler = null;
   }
 
-  getConnectionState(): RTCPeerConnectionState | null {
-    return this.peerConnection?.connectionState || null;
-  }
-
   cleanup(): void {
-    console.log('[WebRTC] Cleaning up...');
-    
-    this.localStream?.getTracks().forEach(track => {
-      track.stop();
-      console.log('[WebRTC] Stopped track:', track.kind);
-    });
-
-    if (this.peerConnection?.signalingState !== 'closed') {
-      this.peerConnection?.close();
-    }
-
+    this.localStream?.getTracks().forEach(track => track.stop());
+    this.peerConnection?.close();
     this.localStream = null;
     this.remoteStream = null;
     this.peerConnection = null;
-    this.onIceCandidate = null;
-    this.activeCallId = null;
     this.onStreamHandler = null;
+    this.pendingCandidates = [];
     this.connectionStateHandler = null;
   }
 
@@ -306,10 +251,45 @@ export class WebRTCService {
     return this.localStream;
   }
 
-  setActiveCallId(callId: string) {
-    this.activeCallId = callId;
-    console.log('[WebRTC] 📞 Set active call ID:', callId);
+  getConnectionState(): RTCPeerConnectionState | null {
+    return this.peerConnection?.connectionState || null;
   }
 }
 
-export const webRTCService = new WebRTCService();
+// Create mock implementation that matches the interface
+class MockWebRTCService implements IWebRTCService {
+  async initializeCall(): Promise<MediaStream> {
+    return Promise.reject('WebRTC not available during SSR');
+  }
+  cleanup(): void {}
+  setOnStreamUpdate(): void {}
+  getLocalStream(): null { return null; }
+  onConnectionStateChange(): void {}
+  offConnectionStateChange(): void {}
+  async createOffer(): Promise<RTCSessionDescriptionInit> {
+    return Promise.reject('WebRTC not available during SSR');
+  }
+  async handleSignalingMessage(): Promise<void> {
+    return Promise.resolve();
+  }
+  getConnectionState(): RTCPeerConnectionState | null {
+    return null;
+  }
+  
+  async handleOffer(): Promise<RTCSessionDescriptionInit> {
+    return Promise.reject('WebRTC not available during SSR');
+  }
+  
+  async handleAnswer(): Promise<void> {
+    return Promise.resolve();
+  }
+  
+  async setLocalDescription(): Promise<void> {
+    return Promise.reject('WebRTC not available during SSR');
+  }
+}
+
+// Export the appropriate implementation
+export const webRTCService: IWebRTCService = typeof window !== 'undefined' 
+  ? new WebRTCService()
+  : new MockWebRTCService();

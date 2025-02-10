@@ -52,6 +52,7 @@ class CallDialogErrorBoundary extends React.Component<{children: React.ReactNode
 }
 
 export function CallDialog({ call, onAccept, onReject, onClose, isIncoming, receiverInfo }: CallDialogProps) {
+  const isBrowser = typeof window !== 'undefined';
   const [isOpen, setIsOpen] = useState(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -67,10 +68,7 @@ export function CallDialog({ call, onAccept, onReject, onClose, isIncoming, rece
   }, [call, isIncoming]);
 
   useEffect(() => {
-    if (!call) {
-      setIsOpen(false);
-      return;
-    }
+    if (!isBrowser || !call) return;
 
     console.log('[CallDialog] Call state changed:', { 
       status: call.status, 
@@ -82,7 +80,7 @@ export function CallDialog({ call, onAccept, onReject, onClose, isIncoming, rece
 
     if (call.status === 'ringing' && !isIncoming) {
       console.log('[CallDialog] Initializing outgoing call');
-      webRTCService.initializeCall(call.type === 'video')
+      webRTCService.initializeCall(call.type === 'video', call.receiverId)
         .then(stream => {
           console.log('[CallDialog] Local stream obtained');
           if (localVideoRef.current) {
@@ -100,7 +98,45 @@ export function CallDialog({ call, onAccept, onReject, onClose, isIncoming, rece
       webRTCService.cleanup();
       audioService.stopAll();
     };
-  }, [call, isIncoming, onReject]);
+  }, [isBrowser, call, isIncoming, onReject]);
+
+  useEffect(() => {
+    if (!call) return;
+
+    const handleSignalingMessage = async (event: MessageEvent) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'webrtc_signaling') {
+        console.log('[CallDialog] Received WebRTC signaling message:', data.payload);
+        await webRTCService.handleSignalingMessage(data.payload);
+      }
+    };
+
+    // Listen for WebRTC signaling messages
+    const eventSource = new EventSource('/api/sse');
+    eventSource.onmessage = handleSignalingMessage;
+
+    return () => {
+      eventSource.close();
+    };
+  }, [call]);
+
+  useEffect(() => {
+    if (!call) return;
+
+    if (call.status === 'connected') {
+      // Create and send offer if we're the caller
+      if (!isIncoming) {
+        webRTCService.createOffer()
+          .then(async (offer) => {
+            await webRTCService.setLocalDescription(offer);
+            // Offer will be sent through the emitSignalingMessage method
+          })
+          .catch(error => {
+            console.error('[CallDialog] Offer creation failed:', error);
+          });
+      }
+    }
+  }, [call?.status, isIncoming]);
 
   useEffect(() => {
     if (!call || !call.sdp) return;
@@ -145,7 +181,7 @@ export function CallDialog({ call, onAccept, onReject, onClose, isIncoming, rece
     } else if (!call || call.status !== 'connected') {
       setCallStartTime(null)
     }
-  }, [call?.status])
+  }, [call, callStartTime])
 
   // Early return if no call data
   if (!call) {
