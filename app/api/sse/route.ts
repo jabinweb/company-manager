@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 import { getServerSession } from '@/lib/server-session';
 
-// Force Node.js runtime and increase duration
-export const runtime = 'nodejs';
-export const maxDuration = 300; // 5 minutes
+// Use Edge Runtime and set max duration within hobby plan limits
+export const runtime = 'edge';  // Changed from 'nodejs' to 'edge'
+export const maxDuration = 60;  // Changed from 300 to 60 seconds (maximum allowed)
 export const dynamic = 'force-dynamic';
 export const preferredRegion = 'auto';
 
