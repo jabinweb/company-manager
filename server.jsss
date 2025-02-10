@@ -1,0 +1,392 @@
+const { createServer } = require('http');
+const { parse } = require('url');
+const next = require('next');
+const { WebSocketServer } = require('ws');
+const { PrismaClient } = require('@prisma/client');
+const jwt = require('jsonwebtoken');
+
+const prisma = new PrismaClient();
+const dev = process.env.NODE_ENV !== 'production';
+const hostname = 'localhost';
+const port = process.env.PORT || 3000;
+const app = next({ dev, hostname, port });
+const handle = app.getRequestHandler();
+
+// Add JWT verification function
+function verifyToken(token) {
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET_KEY || 'your-secret-key');
+  } catch (error) {
+    console.error('WebSocket JWT verification error:', error);
+    return null;
+  }
+}
+
+app.prepare().then(() => {
+  const server = createServer(async (req, res) => {
+    
+    try {
+      const parsedUrl = parse(req.url, true);
+      await handle(req, res, parsedUrl);
+    } catch (err) {
+      console.error('Error occurred handling', req.url, err);
+      res.statusCode = 500;
+      res.end('Internal server error');
+    }
+  });
+
+  // Initialize WebSocket server
+  const wss = new WebSocketServer({ 
+    server,
+    path: '/ws',
+    // Add WebSocket server options
+    handleProtocols: (protocols, req) => {
+      return protocols[0]; // Accept first protocol
+    },
+    clientTracking: true,
+    maxPayload: 65536 // 64KB max payload
+  });
+
+  wss.on('error', (error) => {
+    console.error('WebSocket Server Error:', {
+      error: error.message,
+      code: error.code,
+      type: error.type,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Track connected clients
+  const clients = new Map();
+
+  wss.on('connection', (ws, req) => {
+    console.log('New WebSocket connection from:', {
+      ip: req.socket.remoteAddress,
+      timestamp: new Date().toISOString()
+    });
+
+    let authTimeoutId = setTimeout(() => {
+      if (!ws.userId) {
+        console.log('Client failed to authenticate in time');
+        ws.close(1008, 'Authentication timeout');
+      }
+    }, 10000); // Increased timeout to 10 seconds
+
+    let pingTimeout;
+
+    const heartbeat = () => {
+      ws.isAlive = true;
+      if (pingTimeout) clearTimeout(pingTimeout);
+      pingTimeout = setTimeout(() => {
+        console.log('Client ping timeout:', ws.userId);
+        ws.terminate();
+      }, 45000); // Client has 45 seconds to respond to ping
+    };
+
+    ws.isAlive = true;
+    let authTimeout = setTimeout(() => {
+      if (!ws.userId) {
+        console.log('Client failed to authenticate in time');
+        ws.close(1008, 'Authentication timeout');
+      }
+    }, 5000); // 5 second timeout for authentication
+
+    // Send initial status on auth
+    ws.on('message', async (rawMessage) => {
+      try {
+        const message = JSON.parse(rawMessage.toString());
+        console.log('[Server] Received message:', {
+          type: message.type,
+          from: ws.userId,
+          to: message.data?.receiverId,
+          timestamp: new Date().toISOString()
+        });
+
+        switch (message.type) {
+          case 'auth':
+            if (!message.userId || !message.userName) {
+              ws.close(1008, 'Invalid authentication data');
+              return;
+            }
+
+            clearTimeout(authTimeoutId);
+            ws.userId = message.userId;
+            ws.userName = message.userName;
+            ws.userRole = message.userRole;
+            ws.companyId = message.companyId;
+            ws.isAlive = true;
+            
+            clients.set(message.userId, ws);
+            heartbeat();
+            
+            console.log('Client authenticated:', {
+              userId: message.userId,
+              userName: message.userName,
+              role: message.userRole,
+              companyId: message.companyId
+            });
+            
+            // Send auth success response
+            ws.send(JSON.stringify({
+              type: 'auth_response',
+              success: true,
+              timestamp: new Date().toISOString()
+            }));
+
+            // Broadcast user's online status
+            broadcastUserStatus(ws.userId, 'online');
+            break;
+
+          case 'ping':
+            heartbeat();
+            ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+            break;
+
+          case 'message':
+            if (!message.content || !message.senderId || !message.receiverId) {
+              console.error('Invalid message format:', message);
+              ws.send(JSON.stringify({ 
+                type: 'error', 
+                message: 'Invalid message format' 
+              }));
+              return;
+            }
+            const newMessage = await prisma.message.create({
+              data: {
+                content: message.content,
+                senderId: message.senderId,
+                receiverId: message.receiverId,
+                status: 'SENT',
+                type: 'TEXT'
+              },
+              include: {
+                sender: {
+                  select: {
+                    name: true,
+                    avatar: true
+                  }
+                }
+              }
+            });
+
+            // Send to both sender and receiver
+            [message.senderId, message.receiverId].forEach(userId => {
+              const client = clients.get(userId);
+              if (client?.readyState === 1) { // WebSocket.OPEN
+                client.send(JSON.stringify({
+                  type: 'new_message',
+                  message: newMessage
+                }));
+              }
+            });
+            break;
+
+          case 'call_initiate':
+            if (!message.data?.receiverId) {
+              console.error('[Server] Invalid call data - missing receiverId');
+              return;
+            }
+
+            const receiverWs = clients.get(message.data.receiverId);
+            console.log('[Server] Call initiation check:', {
+              receiverId: message.data.receiverId,
+              receiverExists: !!receiverWs,
+              receiverState: receiverWs?.readyState,
+              allClients: Array.from(clients.keys())
+            });
+
+            if (receiverWs?.readyState === WebSocket.OPEN) {
+              console.log('[Server] Sending call_receiving to receiver');
+              try {
+                receiverWs.send(JSON.stringify({
+                  type: 'call_receiving',
+                  callData: message.data
+                }));
+                console.log('[Server] Call notification sent successfully');
+                
+                // Send confirmation to caller
+                ws.send(JSON.stringify({
+                  type: 'call_notification_sent',
+                  receiverId: message.data.receiverId
+                }));
+              } catch (error) {
+                console.error('[Server] Failed to send call notification:', error);
+                ws.send(JSON.stringify({
+                  type: 'call_error',
+                  error: 'Failed to notify receiver'
+                }));
+              }
+            } else {
+              // ... existing error handling ...
+            }
+            break;
+
+          case 'call_accept':
+            console.log('[Server] call_accept received:', {
+              caller: message.callData?.callerId,
+              receiver: ws.userId,
+              callId: message.callData?.callId,
+              timestamp: new Date().toISOString()
+            });
+            console.log('Call accepted:', message.callData);
+            const callerWs = clients.get(message.callData.callerId);
+            if (!callerWs) {
+              console.error('[Server] Caller WebSocket missing for call_accept:', message.callData?.callerId);
+              // ...send error if needed...
+            } else if (callerWs?.readyState !== WebSocket.OPEN) {
+              console.error('[Server] Caller WebSocket not open for call_accept:', message.callData?.callerId);
+            } else {
+              console.log('[Server] Forwarding call_accepted to caller:', message.callData?.callerId);
+              callerWs.send(JSON.stringify({
+                type: 'call_accepted',
+                callId: message.callData.callId
+              }));
+            }
+            break;
+
+          case 'call_reject':
+          case 'call_end':
+            if (!message.callData) {
+              console.warn('[Server] Missing callData for call_end; ignoring.');
+              return;
+            }
+            console.log('[Server] call_reject/call_end received:', {
+              type: message.type,
+              caller: message.callData?.callerId,
+              receiver: message.callData?.receiverId,
+              callId: message.callData?.callId,
+              timestamp: new Date().toISOString()
+            });
+            console.log('Call ended/rejected:', message.callData);
+            const callParticipants = [
+              message.callData.callerId,
+              message.callData.receiverId
+            ];
+            
+            callParticipants.forEach(userId => {
+              const clientWs = clients.get(userId);
+              if (clientWs?.readyState === WebSocket.OPEN) {
+                clientWs.send(JSON.stringify({
+                  type: message.type,
+                  callId: message.callData.callId,
+                  callData: message.callData,
+                  endedBy: ws.userId
+                }));
+              }
+            });
+            break;
+
+          case 'typing':
+            // Use ws.userId instead of expecting it in the message
+            const typingReceiver = clients.get(message.receiverId);
+            if (typingReceiver?.readyState === WebSocket.OPEN) {
+              typingReceiver.send(JSON.stringify({
+                type: 'typing',
+                userId: ws.userId, // Use the stored userId from the connection
+                timestamp: Date.now()
+              }));
+            }
+            break;
+
+          case 'status_change':
+            // Broadcast status change to all connected clients
+            const status = message.status;
+            Array.from(clients.values()).forEach(client => {
+              if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({
+                  type: 'user_status',
+                  userId: ws.userId,
+                  status
+                }));
+              }
+            });
+            break;
+        }
+      } catch (error) {
+        console.error('Message processing error:', {
+          error,
+          userId: ws.userId,
+          timestamp: new Date().toISOString()
+        });
+        ws.send(JSON.stringify({ 
+          type: 'error', 
+          message: 'Failed to process message'
+        }));
+      }
+    });
+
+    // Add function to broadcast status
+    function broadcastUserStatus(userId, status) {
+      const timestamp = Date.now();
+      Array.from(clients.values()).forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            type: 'user_status',
+            userId,
+            status,
+            timestamp
+          }));
+        }
+      });
+    }
+
+    // Update status periodically for active users
+    const activityInterval = setInterval(() => {
+      if (ws.userId) {
+        broadcastUserStatus(ws.userId, 'active');
+      }
+    }, 30000);
+
+    ws.on('error', (error) => {
+      console.error('Client WebSocket Error:', {
+        error: error.message,
+        userId: ws.userId,
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    ws.on('close', () => {
+      clearTimeout(pingTimeout);
+      clearTimeout(authTimeoutId);
+      if (ws.userId) {
+        broadcastUserStatus(ws.userId, 'offline');
+        clients.delete(ws.userId);
+        clearInterval(activityInterval);
+        console.log('Client disconnected:', ws.userId);
+      }
+    });
+
+    // Keep connection alive
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+  });
+
+  // Enhanced ping/pong with error handling
+  const interval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (!ws.isAlive) {
+        console.log('Terminating inactive client:', ws.userId);
+        return ws.terminate();
+      }
+      ws.isAlive = false;
+      ws.ping((error) => {
+        if (error) {
+          console.error('Ping error:', {
+            error: error.message,
+            userId: ws.userId
+          });
+        }
+      });
+    });
+  }, 30000);
+
+  wss.on('close', () => {
+    clearInterval(interval);
+  });
+
+  server.listen(port, (err) => {
+    if (err) throw err;
+    console.log(`> Ready on http://${hostname}:${port}`);
+    console.log(`> WebSocket server is running on ws://${hostname}:${port}/ws`);
+  });
+});
