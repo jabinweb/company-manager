@@ -8,6 +8,7 @@ import { Sidebar } from "./sidebar";
 import { Chat } from "./chat";
 import { ChatProvider } from '../../contexts/chat-context';
 import { User } from "@/types";
+import { useMessageStore } from '@/lib/stores/message-store';
 
 interface ChatLayoutProps {
   defaultLayout: number[] | undefined;
@@ -33,45 +34,102 @@ export function ChatLayout({
 }: ChatLayoutProps) {
   const { data: session } = useSession();
   const [isCollapsed, setIsCollapsed] = React.useState(defaultCollapsed);
-  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [isMobile, setIsMobile] = useState(false);
   const [selectedChatItem, setSelectedChatItem] = React.useState<{
     id: string
     name: string
     avatar: string
   } | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
+  
+  const setContacts = useMessageStore((state) => state.setContacts);
+  const addMessage = useMessageStore((state) => state.addMessage);
+  const markAsRead = useMessageStore((state) => state.markAsRead);
 
-  // Fetch employees for chat
+  // Fetch sorted contacts
   useEffect(() => {
-    const fetchEmployees = async () => {      
+    const fetchSortedContacts = async () => {      
       try {
-        const response = await fetch('/api/employees/chat-contacts');
-        
-        if (!response.ok) throw new Error('Failed to fetch employees');
+        const response = await fetch('/api/chats/sorted-contacts');
+        if (!response.ok) throw new Error('Failed to fetch contacts');
         const data = await response.json();
         
-        if (data.success && Array.isArray(data.data)) {
-          setEmployees(data.data);
-          // Set first employee as default selected user if none selected
-          if (!selectedChatItem && data.data.length > 0) {
-            setSelectedChatItem({
-              id: data.data[0].id,
-              name: data.data[0].name,
-              avatar: data.data[0].avatar ?? '/avatars/default.png'
-            });
-          }
+        const formattedContacts = data.map((contact: any) => ({
+          id: contact.id,
+          name: contact.name,
+          avatar: contact.avatar ?? '/avatars/default.png',
+          lastMessage: contact.lastMessageContent ? {
+            content: contact.lastMessageContent,
+            timestamp: contact.lastMessageTimestamp,
+            unread: contact.isUnread
+          } : undefined
+        }));
+        
+        setContacts(formattedContacts);
+
+        // Set first contact as default if none selected
+        if (!selectedChatItem && formattedContacts.length > 0) {
+          setSelectedChatItem({
+            id: formattedContacts[0].id,
+            name: formattedContacts[0].name,
+            avatar: formattedContacts[0].avatar,
+          });
         }
       } catch (error) {
-        console.error('Error fetching employees:', error);
+        console.error('Error fetching contacts:', error);
       }
     };
 
-    if (session?.user?.currentCompanyId) { // Check for companyId instead of employeeId
-      fetchEmployees();
+    if (session?.user?.currentCompanyId) {
+      fetchSortedContacts();
     }
-  }, [session?.user?.currentCompanyId, selectedChatItem]);
+  }, [session?.user?.currentCompanyId, setContacts]);
 
-  // Mobile check effect
+  // Listen for SSE messages
+  useEffect(() => {
+    if (!session?.user?.employeeId) return;
+
+    let eventSource = new EventSource('/api/sse');
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'message') {
+          const isSender = data.senderId === session.user.employeeId;
+          const contactId = isSender ? data.receiverId : data.senderId;
+          
+          // Update message store with new message
+          addMessage({
+            contactId,
+            content: data.content,
+            timestamp: data.timestamp,
+            isSender
+          });
+
+          // Auto mark as read if chat is open
+          if (selectedChatItem?.id === contactId) {
+            markAsRead(contactId);
+          }
+        }
+      } catch (error) {
+        console.error('Error processing SSE message:', error);
+      }
+    };
+
+    // Add error and reconnection handling
+    eventSource.onerror = () => {
+      eventSource.close();
+      setTimeout(() => {
+        // Reconnect after 5 seconds
+        const newEventSource = new EventSource('/api/sse');
+        eventSource = newEventSource;
+      }, 5000);
+    };
+
+    return () => eventSource.close();
+  }, [session?.user?.employeeId, selectedChatItem, addMessage, markAsRead]);
+
+  // Mobile responsiveness
   useEffect(() => {
     const checkScreenWidth = () => {
       setIsMobile(window.innerWidth <= 768);
@@ -81,13 +139,14 @@ export function ChatLayout({
     return () => window.removeEventListener("resize", checkScreenWidth);
   }, []);
 
+  function handleSelectUser(user: { id: string; name: string; avatar: string }) {
+    setSelectedChatItem(user);
+    markAsRead(user.id); // Mark messages as read when selecting chat
+  }
+
   if (!session?.user) return null;
 
   const currentUser = session.user as ExtendedUser
-
-  function handleSelectUser(user: { id: string; name: string; avatar: string }) {
-    setSelectedChatItem(user);
-  }
 
   return (
     <ChatProvider 
@@ -124,12 +183,6 @@ export function ChatLayout({
         >
           <Sidebar
             isCollapsed={isCollapsed || isMobile}
-            chats={employees.map((emp) => ({
-              id: emp.id,
-              name: emp.name,
-              avatar: emp.avatar ?? '/avatars/default.png',
-              variant: selectedChatItem?.id === emp.id ? "secondary" : "ghost",
-            }))}
             onSelect={handleSelectUser}
             isMobile={isMobile}
           />

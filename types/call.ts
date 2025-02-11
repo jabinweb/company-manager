@@ -37,4 +37,3 @@ export function createCallData(params: Omit<CallData, 'callId' | 'sdp'>): CallDa
     ...params
   };
 }
-

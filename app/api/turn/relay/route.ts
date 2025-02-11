@@ -1,11 +1,10 @@
 import { NextRequest } from 'next/server';
 import { getServerSession } from '@/lib/server-session';
 
-// Use Edge Runtime for WebSocket support
 export const runtime = 'edge';
 
-const peers = new Map<string, WebSocket>();
-const relayConnections = new Map<string, Set<string>>();
+// Store connections in memory
+const peers = new Map<string, Set<ReadableStreamDefaultController>>();
 
 export async function GET(req: NextRequest) {
   try {
@@ -15,62 +14,78 @@ export async function GET(req: NextRequest) {
     }
 
     const userId = session.user.employeeId;
-    const { socket, response } = Deno.upgradeWebSocket(req);
+    const encoder = new TextEncoder();
 
-    // Store peer connection
-    peers.set(userId, socket);
-
-    socket.onmessage = async (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        
-        switch (data.type) {
-          case 'relay_request':
-            handleRelayRequest(userId, data.targetId);
-            break;
-            
-          case 'relay_data':
-            relayData(userId, data.targetId, data.payload);
-            break;
+    const stream = new ReadableStream({
+      start(controller) {
+        // Initialize peer's stream set
+        if (!peers.has(userId)) {
+          peers.set(userId, new Set());
         }
-      } catch (error) {
-        console.error('[TURN Relay] Message handling error:', error);
+        peers.get(userId)?.add(controller);
+
+        // Send connection confirmation
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({
+            type: 'connection_established',
+            userId,
+            timestamp: new Date().toISOString()
+          })}\n\n`)
+        );
+
+        // Cleanup on disconnect
+        req.signal.addEventListener('abort', () => {
+          peers.get(userId)?.delete(controller);
+          if (peers.get(userId)?.size === 0) {
+            peers.delete(userId);
+          }
+          controller.close();
+        });
       }
-    };
+    });
 
-    socket.onclose = () => {
-      peers.delete(userId);
-      cleanupRelayConnections(userId);
-    };
-
-    return response;
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      }
+    });
   } catch (error) {
-    console.error('[TURN Relay] Connection error:', error);
+    console.error('[Relay] Connection error:', error);
     return new Response('Error', { status: 500 });
   }
 }
 
-function handleRelayRequest(sourceId: string, targetId: string) {
-  if (!relayConnections.has(sourceId)) {
-    relayConnections.set(sourceId, new Set());
-  }
-  relayConnections.get(sourceId)?.add(targetId);
-}
+export async function POST(req: NextRequest) {
+  try {
+    const session = await getServerSession();
+    if (!session?.user?.employeeId) {
+      return new Response('Unauthorized', { status: 401 });
+    }
 
-function relayData(sourceId: string, targetId: string, data: any) {
-  const targetSocket = peers.get(targetId);
-  if (targetSocket && relayConnections.get(sourceId)?.has(targetId)) {
-    targetSocket.send(JSON.stringify({
-      type: 'relay_data',
-      sourceId,
-      payload: data
-    }));
-  }
-}
+    const data = await req.json();
+    const targetPeers = peers.get(data.targetId);
+    
+    if (targetPeers) {
+      const message = JSON.stringify({
+        type: 'relay_data',
+        sourceId: session.user.employeeId,
+        payload: data.payload
+      });
 
-function cleanupRelayConnections(userId: string) {
-  relayConnections.delete(userId);
-  relayConnections.forEach(connections => {
-    connections.delete(userId);
-  });
+      targetPeers.forEach(controller => {
+        try {
+          controller.enqueue(new TextEncoder().encode(`data: ${message}\n\n`));
+        } catch (error) {
+          console.error('[Relay] Send error:', error);
+        }
+      });
+    }
+
+    return new Response('OK');
+  } catch (error) {
+    console.error('[Relay] Send error:', error);
+    return new Response('Error', { status: 500 });
+  }
 }

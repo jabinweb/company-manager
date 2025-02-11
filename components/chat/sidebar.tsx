@@ -1,124 +1,94 @@
 "use client";
 
-import { MoreHorizontal, SquarePen } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { MoreHorizontal, Search, MessageSquarePlus } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-  TooltipProvider,
-} from "@/components/ui/tooltip";
 import { Avatar, AvatarImage } from "@/components/ui/avatar";
-import { ScrollArea } from '@/components/ui/scroll-area'
-
-interface ChatItem {
-  id: string;
-  name: string;
-  avatar: string;
-  variant: "secondary" | "ghost";
-}
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { useMessageStore } from '@/lib/stores/message-store';
+import { useMemo, useState } from 'react';
+import { ChatContact, type ChatContactItem } from './chat-contact';
+import { cn } from "@/lib/utils";
 
 interface SidebarProps {
   isCollapsed: boolean;
-  chats: ChatItem[];
   isMobile: boolean;
-  onSelect: (user: ChatItem) => void;
+  onSelect: (user: ChatContactItem) => void;
 }
 
-export function Sidebar({ chats, isCollapsed, isMobile, onSelect }: SidebarProps) {
+type ChatVariant = "secondary" | "ghost";
+
+export function Sidebar({ isCollapsed, isMobile, onSelect }: SidebarProps) {
+  const contacts = useMessageStore((state) => state.contacts);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const chatItems = useMemo<ChatContactItem[]>(() => 
+    contacts
+      .filter(contact => contact.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      .map(contact => {
+        const variant: ChatVariant = contact.lastMessage?.unread ? "secondary" : "ghost";
+        return {
+          id: contact.id,
+          name: contact.name,
+          avatar: contact.avatar,
+          variant,
+          lastMessage: contact.lastMessage
+        };
+      }),
+    [contacts, searchQuery]
+  );
+
   return (
-    <div
-      data-collapsed={isCollapsed}
-      className="relative group flex flex-col h-full bg-muted/10 dark:bg-muted/20 gap-4 p-2 data-[collapsed=true]:p-2"
-    >
+    <div className={cn(
+      "m-auto flex flex-col h-full bg-background transition-all duration-300 ease-in-out",
+      isCollapsed ? "w-16" : "w-full md:w-80"
+    )}>
+      <div className="p-3 flex justify-between items-center bg-muted/30">
+        {!isCollapsed && (
+          <Avatar className="h-10 w-10">
+            <AvatarImage src="/avatars/default.png" />
+          </Avatar>
+        )}
+        <div className={cn(
+          "flex gap-2",
+          isCollapsed && "w-full justify-center"
+        )}>
+          {!isCollapsed && (
+            <button className={buttonVariants({ variant: "ghost", size: "icon" })}>
+              <MessageSquarePlus className="h-5 w-5" />
+            </button>
+          )}
+          <button className={buttonVariants({ variant: "ghost", size: "icon" })}>
+            <MoreHorizontal className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+
       {!isCollapsed && (
-        <div className="flex justify-between p-2 items-center">
-          <div className="flex gap-2 items-center text-2xl">
-            <p className="font-medium">Chats</p>
-            <span className="text-zinc-300">({chats.length})</span>
-          </div>
-
-          <div>
-            <button
-              className={cn(
-                buttonVariants({ variant: "ghost", size: "icon" }),
-                "h-9 w-9",
-              )}
-            >
-              <MoreHorizontal size={20} />
-            </button>
-
-            <button
-              className={cn(
-                buttonVariants({ variant: "ghost", size: "icon" }),
-                "h-9 w-9",
-              )}
-            >
-              <SquarePen size={20} />
-            </button>
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search chats"
+              className="w-full pl-9 pr-4 py-2 bg-muted/50 rounded-lg text-sm"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
         </div>
       )}
-      <ScrollArea className="h-[calc(100vh-10rem)]">
-        <nav className="grid gap-1 px-2 group-[[data-collapsed=true]]:justify-center group-[[data-collapsed=true]]:px-2">
-          {chats.map((chat) =>
-            isCollapsed ? (
-              <TooltipProvider key={chat.id}>
-                <Tooltip delayDuration={0}>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={() => onSelect(chat)}
-                      className={cn(
-                        buttonVariants({ variant: chat.variant, size: "icon" }),
-                        "h-11 w-11 md:h-16 md:w-16",
-                        chat.variant === "secondary" &&
-                          "dark:bg-muted dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-white",
-                      )}
-                    >
-                      <Avatar className="flex justify-center items-center">
-                        <AvatarImage
-                          src={chat.avatar}
-                          alt={chat.name}
-                          className="w-10 h-10"
-                        />
-                      </Avatar>
-                      <span className="sr-only">{chat.name}</span>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="right"
-                    className="flex items-center gap-4"
-                  >
-                    {chat.name}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ) : (
-              <button
-                key={chat.id}
-                onClick={() => onSelect(chat)}
-                className={cn(
-                  buttonVariants({ variant: chat.variant, size: "lg" }),
-                  chat.variant === "secondary" &&
-                    "dark:bg-muted dark:text-white dark:hover:bg-muted dark:hover:text-white shrink",
-                  "justify-start gap-4 w-full",
-                )}
-              >
-                <Avatar className="flex justify-center items-center">
-                  <AvatarImage
-                    src={chat.avatar}
-                    alt={chat.name}
-                    className="w-10 h-10"
-                  />
-                </Avatar>
-                <div className="flex flex-col max-w-28 text-left">
-                  <span>{chat.name}</span>
-                </div>
-              </button>
-            ),
-          )}
-        </nav>
+
+      <ScrollArea className="h-[calc(100vh-11.5rem)]">
+        <div className="flex flex-col">
+          {chatItems.map((contact) => (
+            <ChatContact
+              key={contact.id}
+              contact={contact}
+              onSelect={onSelect}
+              isCollapsed={isCollapsed}
+            />
+          ))}
+        </div>
       </ScrollArea>
     </div>
   );

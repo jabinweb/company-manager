@@ -69,3 +69,22 @@ export interface ChatStateRefs {
   prevMessagesRef: React.MutableRefObject<Message[]>;
   lastTypingNotificationRef: React.MutableRefObject<number>;
 }
+
+export interface ChatItem {
+  id: string;
+  name: string;
+  avatar: string;
+  variant: "secondary" | "ghost";
+  lastMessage?: {
+    content: string;
+    timestamp: string;
+    unread: boolean;
+  };
+}
+
+export interface Employee {
+  id: string;
+  name: string;
+  avatar: string | null;
+  department: string;
+}

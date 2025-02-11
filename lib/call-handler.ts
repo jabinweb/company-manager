@@ -4,12 +4,28 @@ class CallHandler {
   private static instance: CallHandler;
   private activeListeners: Set<(call: CallData) => void> = new Set();
   private activeCall: CallData | null = null;
+  private listeners: Set<(call: any) => void> = new Set();
 
   static getInstance() {
     if (!this.instance) {
       this.instance = new CallHandler();
     }
     return this.instance;
+  }
+
+  async initializeCall(callData: any) {
+    try {
+      // Get TURN credentials before initializing
+      const response = await fetch('/api/turn');
+      if (!response.ok) throw new Error('Failed to fetch TURN credentials');
+      const config = await response.json();
+
+      // Initialize with custom TURN
+      return { ...callData, iceServers: config.iceServers };
+    } catch (error) {
+      console.error('[CallHandler] Init error:', error);
+      throw error;
+    }
   }
 
   addListener(callback: (call: CallData) => void): () => void {

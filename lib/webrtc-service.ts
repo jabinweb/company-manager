@@ -12,7 +12,7 @@ const ICE_SERVERS = {
 
 // Define interface for public methods
 interface IWebRTCService {
-  initializeCall(enableVideo: boolean): Promise<MediaStream>;
+  initializeCall(enableVideo: boolean, targetId: string, onIceCandidate: (candidate: RTCIceCandidateInit) => void): Promise<MediaStream>;
   cleanup(): void;
   setOnStreamUpdate(callback: (stream: MediaStream) => void): void;
   getLocalStream(): MediaStream | null;
@@ -24,6 +24,7 @@ interface IWebRTCService {
   handleOffer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit>;
   handleAnswer(answer: RTCSessionDescriptionInit): Promise<void>;
   setLocalDescription(description: RTCSessionDescriptionInit): Promise<void>;
+  handleIceCandidate(candidate: RTCIceCandidateInit): Promise<void>;
 }
 
 class WebRTCService implements IWebRTCService {
@@ -33,6 +34,7 @@ class WebRTCService implements IWebRTCService {
   private onStreamHandler: ((stream: MediaStream) => void) | null = null;
   private pendingCandidates: RTCIceCandidate[] = [];
   private connectionStateHandler: ((state: RTCPeerConnectionState) => void) | null = null;
+  private activeTargetId: string | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -40,12 +42,35 @@ class WebRTCService implements IWebRTCService {
     }
   }
 
-  private initializePeerConnection() {
+  private async getIceServers(): Promise<RTCConfiguration> {
+    try {
+      const response = await fetch('/api/turn');
+      if (!response.ok) throw new Error('Failed to fetch TURN credentials');
+      const config = await response.json();
+      return config;
+    } catch (error) {
+      console.error('[WebRTC] TURN config error:', error);
+      // Fallback to STUN only
+      return {
+        iceServers: [{
+          urls: [
+            'stun:stun1.l.google.com:19302',
+            'stun:stun2.l.google.com:19302'
+          ]
+        }],
+        iceCandidatePoolSize: 10
+      };
+    }
+  }
+
+  private async initializePeerConnection() {
     if (typeof window === 'undefined') return;
 
     try {
-      this.peerConnection = new window.RTCPeerConnection(ICE_SERVERS);
+      const config = await this.getIceServers();
+      this.peerConnection = new window.RTCPeerConnection(config);
       this.setupConnectionHandlers();
+      console.log('[WebRTC] Initialized with config:', config);
     } catch (error) {
       console.error('[WebRTC] Failed to initialize:', error);
     }
@@ -90,10 +115,23 @@ class WebRTCService implements IWebRTCService {
     return this.peerConnection;
   }
 
-  async initializeCall(enableVideo: boolean): Promise<MediaStream> {
+  async initializeCall(enableVideo: boolean, targetId: string, onIceCandidate: (candidate: RTCIceCandidateInit) => void): Promise<MediaStream> {
     try {
       this.cleanup();
-      this.peerConnection = new window.RTCPeerConnection(ICE_SERVERS);
+      this.activeTargetId = targetId;
+      
+      // Get fresh TURN credentials for each call
+      const config = await this.getIceServers();
+      this.peerConnection = new window.RTCPeerConnection(config);
+
+      // Set up ICE candidate handler
+      this.peerConnection.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+          onIceCandidate(candidate.toJSON());
+        }
+      };
+
+      // Rest of connection handlers
       this.setupConnectionHandlers();
 
       const constraints = {
@@ -102,11 +140,12 @@ class WebRTCService implements IWebRTCService {
       };
 
       this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
-      this.localStream.getTracks().forEach(track => {
-        if (this.peerConnection && this.localStream) {
-          this.peerConnection.addTrack(track, this.localStream);
-        }
-      });
+      
+      if (this.peerConnection && this.localStream) {
+        this.localStream.getTracks().forEach(track => {
+          this.peerConnection?.addTrack(track, this.localStream!);
+        });
+      }
 
       return this.localStream;
     } catch (error) {
@@ -210,6 +249,15 @@ class WebRTCService implements IWebRTCService {
     console.log('[WebRTC] Set local description:', description.type);
   }
 
+  async handleIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
+    if (!this.peerConnection) return;
+    try {
+      await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (error) {
+      console.error('[WebRTC] Ice candidate error:', error);
+    }
+  }
+
   private emitSignalingMessage(message: any) {
     fetch('/api/sse', {
       method: 'POST',
@@ -227,8 +275,7 @@ class WebRTCService implements IWebRTCService {
     
     // Apply handler to current connection if exists
     if (this.peerConnection) {
-      const currentState = this.peerConnection.connectionState;
-      handler(currentState);
+      handler(this.peerConnection.connectionState);
     }
   }
 
@@ -286,6 +333,10 @@ class MockWebRTCService implements IWebRTCService {
   
   async setLocalDescription(): Promise<void> {
     return Promise.reject('WebRTC not available during SSR');
+  }
+
+  async handleIceCandidate(): Promise<void> {
+    return Promise.resolve();
   }
 }
 

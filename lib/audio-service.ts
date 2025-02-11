@@ -1,71 +1,108 @@
 class AudioService {
-  private audioMap: Map<string, HTMLAudioElement> = new Map();
-  private currentSound: string | null = null;
+  private audioContext: AudioContext | null = null;
+  private ringBuffer: AudioBuffer | null = null;
+  private dialBuffer: AudioBuffer | null = null;
+  private currentSource: AudioBufferSourceNode | null = null;
+  private hasInteracted = false;
+  private pendingSound: 'ring' | 'dial' | null = null;
 
   constructor() {
-    // Only initialize if we're in the browser
     if (typeof window !== 'undefined') {
-      this.audioMap.set('ring', new window.Audio('/sounds/ring.mp3'));
-      this.audioMap.set('dial', new window.Audio('/sounds/dial.mp3'));
-      
-      // Configure all audio elements
-      this.audioMap.forEach(audio => {
-        audio.loop = true;
-        audio.volume = 0.5;
-      });
+      this.setupInteractionHandlers();
     }
   }
 
-  async playSound(name: 'ring' | 'dial') {
-    if (typeof window === 'undefined') return;
+  private setupInteractionHandlers() {
+    const handleInteraction = () => {
+      this.hasInteracted = true;
+      if (this.pendingSound) {
+        this.playSound(this.pendingSound).catch(console.error);
+      }
+    };
+
+    ['mousedown', 'touchstart', 'keydown'].forEach(event => {
+      document.addEventListener(event, handleInteraction, { once: true });
+    });
+  }
+
+  private async initializeAudioContext() {
+    if (this.audioContext) return;
 
     try {
-      const audio = this.audioMap.get(name);
-      if (!audio) return;
+      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      await this.audioContext.resume();
 
-      // Stop current sound first and wait a bit
-      await this.stopAll();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      const [ringResponse, dialResponse] = await Promise.all([
+        fetch('/sounds/ring.mp3'),
+        fetch('/sounds/dial.mp3')
+      ]);
 
-      this.currentSound = name;
-      await audio.play().catch(error => {
-        console.error('[AudioService] Play error:', error);
-        this.currentSound = null;
-      });
+      const [ringBuffer, dialBuffer] = await Promise.all([
+        ringResponse.arrayBuffer().then(buffer => this.audioContext!.decodeAudioData(buffer)),
+        dialResponse.arrayBuffer().then(buffer => this.audioContext!.decodeAudioData(buffer))
+      ]);
+
+      this.ringBuffer = ringBuffer;
+      this.dialBuffer = dialBuffer;
     } catch (error) {
-      console.error('[AudioService] Error playing sound:', error);
-      this.currentSound = null;
+      console.error('[Audio] Initialization error:', error);
+    }
+  }
+
+  async playSound(type: 'ring' | 'dial') {
+    if (!this.hasInteracted) {
+      console.log('[Audio] Queuing sound for after interaction:', type);
+      this.pendingSound = type;
+      return;
+    }
+
+    try {
+      await this.initializeAudioContext();
+      if (!this.audioContext) return;
+
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+
+      this.stopAll();
+
+      const buffer = type === 'ring' ? this.ringBuffer : this.dialBuffer;
+      if (!buffer) return;
+
+      this.currentSource = this.audioContext.createBufferSource();
+      this.currentSource.buffer = buffer;
+      this.currentSource.loop = true;
+      this.currentSource.connect(this.audioContext.destination);
+      this.currentSource.start();
+    } catch (error) {
+      console.error('[Audio] Playback error:', error);
     }
   }
 
   async stopAll() {
-    if (typeof window === 'undefined') return;
-    
     try {
-      const stopPromises = Array.from(this.audioMap.values()).map(audio => {
-        audio.pause();
-        audio.currentTime = 0;
-        return new Promise(resolve => setTimeout(resolve, 50));
-      });
-      await Promise.all(stopPromises);
-      this.currentSound = null;
+      this.pendingSound = null;
+      if (this.currentSource) {
+        this.currentSource.stop();
+        this.currentSource.disconnect();
+        this.currentSource = null;
+      }
+      if (this.audioContext?.state === 'running') {
+        await this.audioContext.suspend();
+      }
     } catch (error) {
-      console.error('[AudioService] Error stopping sounds:', error);
+      console.error('[Audio] Stop error:', error);
     }
   }
 
-  // Expose methods that check for browser environment
-  playRingTone = () => {
-    if (typeof window !== 'undefined') {
-      this.playSound('ring');
-    }
-  };
+  playRingTone() {
+    return this.playSound('ring');
+  }
 
-  playDialTone = () => {
-    if (typeof window !== 'undefined') {
-      this.playSound('dial');
-    }
-  };
+  playDialTone() {
+    return this.playSound('dial');
+  }
 }
 
 export const audioService = new AudioService();
+

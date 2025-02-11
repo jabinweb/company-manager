@@ -1,15 +1,17 @@
 'use client'
 
+
 import { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { 
-  Message, 
-  TextMessage, 
-  MessageAPIPayload, 
-  StatusMessage 
+import {
+  Message,
+  TextMessage,
+  MessageAPIPayload,
+  StatusMessage
 } from '@/types/messages'
 import { useSSE } from '@/hooks/use-sse'
 import { CallProvider, useCall } from './call-context'
 import { CallData } from '@/types/call'
+
 
 interface ChatContextType {
   messages: Message[]
@@ -34,12 +36,15 @@ interface ChatContextType {
   pendingMessages: Set<string>  // Add this line
 }
 
+
 const ChatContext = createContext<ChatContextType | null>(null)
+
 
 interface Props {
   children: React.ReactNode
   currentUser: { id: string; name: string; avatar: string | null }
 }
+
 
 export function ChatProvider({ children, currentUser }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -54,29 +59,21 @@ export function ChatProvider({ children, currentUser }: Props) {
   const [typingUsers, setTypingUsers] = useState<Map<string, NodeJS.Timeout>>(new Map());
   const [pendingMessages, setPendingMessages] = useState<Set<string>>(new Set());
 
-  const { 
-    sendMessage: sendSSEMessage, 
+
+  const {
+    sendMessage: sendSSEMessage,
     setMessageHandler,
     connectionStatus
   } = useSSE()
 
+
   const callContext = useCall();
+
 
   const handleMessage = useCallback((event: MessageEvent) => {
     try {
-      if (!event.data || event.data === 'undefined') {
-        console.warn('[Chat] Received empty SSE data');
-        return;
-      }
-
-      console.debug('[Chat] Processing SSE data:', event.data);
       const data = JSON.parse(event.data);
-      
-      if (!data || typeof data !== 'object') {
-        console.warn('[Chat] Invalid message format:', data);
-        return;
-      }
-
+     
       if (data.type === 'user_status' && Array.isArray(data.onlineUsers)) {
         setOnlineUsers(prev => {
           const newUsers = new Set<string>(data.onlineUsers);
@@ -88,10 +85,12 @@ export function ChatProvider({ children, currentUser }: Props) {
           return newUsers;
         });
 
+
         if (data.userId && data.lastSeen) {
           setLastSeen(prev => new Map(prev).set(data.userId, new Date(data.lastSeen)));
         }
       }
+
 
       if (data.type === 'typing') {
         setTypingUsers(prev => {
@@ -99,7 +98,7 @@ export function ChatProvider({ children, currentUser }: Props) {
           // Clear existing timeout
           const existingTimeout = next.get(data.senderId);
           if (existingTimeout) clearTimeout(existingTimeout);
-          
+         
           // Set new timeout to clear typing status
           const timeout = setTimeout(() => {
             setTypingUsers(prev => {
@@ -108,42 +107,43 @@ export function ChatProvider({ children, currentUser }: Props) {
               return next;
             });
           }, 3000);
-          
+         
           next.set(data.senderId, timeout);
           return next;
         });
       }
 
+
       if (data.type?.startsWith('call_')) {
         callContext.handleCallEvent?.(data);
       }
     } catch (error) {
-      console.error('[Chat] Message handling error:', {
-        error,
-        eventData: event.data,
-        dataType: typeof event.data
-      });
+      console.error('[ChatContext] Message handling error:', error);
     }
   }, [currentUser.id, callContext]);
+
 
   // Remove messageHandlerRef as we're handling messages directly
   useEffect(() => {
     setMessageHandler(handleMessage);
   }, [handleMessage, setMessageHandler]);
 
+
   useEffect(() => {
     console.log('[ChatProvider] Mounted for user:', currentUser.id)
     return () => console.log('[ChatProvider] Unmounting for user:', currentUser.id)
   }, [currentUser.id])
 
+
   const fetchMessages = useCallback(async (userId: string) => {
     try {
       const response = await fetch(`/api/messages?userId=${userId}`);
       const result = await response.json();
-      
+     
       if (!response.ok) {
         throw new Error(result.error || 'Failed to fetch messages');
       }
+
 
       if (result.success && Array.isArray(result.data)) {
         const newMessages = result.data;
@@ -157,6 +157,7 @@ export function ChatProvider({ children, currentUser }: Props) {
     }
   }, []);
 
+
   useEffect(() => {
     if (!selectedChat) return
     fetchMessages(selectedChat)
@@ -164,10 +165,12 @@ export function ChatProvider({ children, currentUser }: Props) {
     return () => clearInterval(poll)
   }, [selectedChat, fetchMessages])
 
+
   const navigateToChat = useCallback((userId: string) => {
     setSelectedChat(userId);
     fetchMessages(userId);
   }, [fetchMessages]);
+
 
   // Update sendTextMessage to properly handle WebSocket reference
   const sendTextMessage = useCallback(async (content: string, receiverId: string) => {
@@ -176,12 +179,13 @@ export function ChatProvider({ children, currentUser }: Props) {
       return;
     }
 
+
     const tempId = crypto.randomUUID();
-    
+   
     try {
       // Add to pending and show optimistic update
       setPendingMessages(prev => new Set(prev).add(tempId));
-      
+     
       const tempMessage: TextMessage = {
         id: tempId,
         type: 'new_message',
@@ -197,8 +201,10 @@ export function ChatProvider({ children, currentUser }: Props) {
         }
       };
 
+
       // Show immediately
       setMessages(prev => [...prev, tempMessage]);
+
 
       const result = await sendSSEMessage({
         type: 'new_message',
@@ -208,6 +214,7 @@ export function ChatProvider({ children, currentUser }: Props) {
         timestamp: new Date().toISOString()
       });
 
+
       // Remove pending status and update with server response
       setPendingMessages(prev => {
         const next = new Set(prev);
@@ -215,8 +222,9 @@ export function ChatProvider({ children, currentUser }: Props) {
         return next;
       });
 
+
       if (result.success && result.data) {
-        setMessages(prev => prev.map(msg => 
+        setMessages(prev => prev.map(msg =>
           msg.id === tempId ? result.data : msg
         ));
       }
@@ -231,6 +239,7 @@ export function ChatProvider({ children, currentUser }: Props) {
     }
   }, [currentUser, connectionStatus, sendSSEMessage]);
 
+
   // Add message queue processing
   useEffect(() => {
     if (connectionStatus === 'connected' && messageQueue.current.length > 0) {
@@ -239,6 +248,7 @@ export function ChatProvider({ children, currentUser }: Props) {
       messageQueue.current = []
     }
   }, [connectionStatus, sendTextMessage])
+
 
   // Update notifyTyping to use memoized WebSocket reference
   const notifyTyping = useCallback((receiverId: string) => {
@@ -252,15 +262,16 @@ export function ChatProvider({ children, currentUser }: Props) {
     sendSSEMessage(typingMessage);
   }, [currentUser.id, sendSSEMessage]);
 
-  // Fix typing timeout cleanup
+
+  // Add cleanup for typing timeout
   useEffect(() => {
-    const currentTimeout = typingTimeoutRef.current;
     return () => {
-      if (currentTimeout) {
-        clearTimeout(currentTimeout);
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
       }
     };
-  }, []); // Empty dependency array since we only need to cleanup on unmount
+  }, []);
+
 
   // Simplified activity tracking
   const updateActivity = useCallback(() => {
@@ -275,11 +286,14 @@ export function ChatProvider({ children, currentUser }: Props) {
     sendSSEMessage(statusMessage);
   }, [currentUser.id, sendSSEMessage]);
 
+
   useEffect(() => {
     if (!currentUser.id || connectionStatus !== 'connected') return;
 
+
     updateActivity();
     const activityInterval = setInterval(updateActivity, 30000);
+
 
     const activityHandler = () => {
       if (connectionStatus === 'connected') {
@@ -287,9 +301,11 @@ export function ChatProvider({ children, currentUser }: Props) {
       }
     };
 
+
     window.addEventListener('mousemove', activityHandler);
     window.addEventListener('keydown', activityHandler);
     window.addEventListener('click', activityHandler);
+
 
     return () => {
       clearInterval(activityInterval);
@@ -299,57 +315,42 @@ export function ChatProvider({ children, currentUser }: Props) {
     };
   }, [currentUser.id, connectionStatus, updateActivity]);
 
+
   // Add memoization for contextValue
   const contextValue = useMemo(() => ({
-    // Message related
     messages,
     sendMessage: sendTextMessage,
-    sendTextMessage,
-    pendingMessages,
-    
-    // Chat state
+    sendTextMessage,            
     isLoading,
     selectedChat,
     setSelectedChat,
     navigateToChat,
-    
-    // User status
     currentUserId: currentUser.id,
-    onlineUsers,
-    lastSeen,
-    
-    // Typing indicators
     notifyTyping,
     isTyping,
-    typingUsers,
-    
-    // Call features
+    onlineUsers,
+    lastSeen, // Add this line
+    typingUsers, // Add this line
+    pendingMessages, // Add this line
     ...callContext
   }), [
-    // Message related
     messages,
     sendTextMessage,
-    pendingMessages,
-    
-    // Chat state
     isLoading,
     selectedChat,
+    isTyping,
     setSelectedChat,
     navigateToChat,
-    
-    // User info
     currentUser.id,
-    onlineUsers,
-    lastSeen,
-    
-    // Typing
     notifyTyping,
     isTyping,
-    typingUsers,
-    
-    // Call features
+    onlineUsers,
+    lastSeen, // Add this line
+    typingUsers, // Add this line
+    pendingMessages, // Add this line
     callContext
   ]);
+
 
   return (
     <ChatContext.Provider value={contextValue}>
@@ -358,10 +359,16 @@ export function ChatProvider({ children, currentUser }: Props) {
   );
 }
 
+
 export const useChat = () => {
   const context = useContext(ChatContext);
   if (!context) throw new Error('useChat must be used within ChatProvider');
   return context;
 };
+
+
+
+
+
 
 
