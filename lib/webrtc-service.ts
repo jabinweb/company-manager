@@ -1,13 +1,17 @@
-const ICE_SERVERS = {
+const ICE_CONFIGURATION = {
   iceServers: [
     {
       urls: [
+        'stun:stun.l.google.com:19302',
         'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302'
+        'stun:stun2.l.google.com:19302',
+        'stun:stun3.l.google.com:19302'
       ]
     }
   ],
-  iceCandidatePoolSize: 10
+  iceCandidatePoolSize: 10,
+  bundlePolicy: 'max-bundle' as RTCBundlePolicy,
+  rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy
 };
 
 // Define interface for public methods
@@ -42,35 +46,13 @@ class WebRTCService implements IWebRTCService {
     }
   }
 
-  private async getIceServers(): Promise<RTCConfiguration> {
-    try {
-      const response = await fetch('/api/turn');
-      if (!response.ok) throw new Error('Failed to fetch TURN credentials');
-      const config = await response.json();
-      return config;
-    } catch (error) {
-      console.error('[WebRTC] TURN config error:', error);
-      // Fallback to STUN only
-      return {
-        iceServers: [{
-          urls: [
-            'stun:stun1.l.google.com:19302',
-            'stun:stun2.l.google.com:19302'
-          ]
-        }],
-        iceCandidatePoolSize: 10
-      };
-    }
-  }
-
   private async initializePeerConnection() {
     if (typeof window === 'undefined') return;
 
     try {
-      const config = await this.getIceServers();
-      this.peerConnection = new window.RTCPeerConnection(config);
+      this.peerConnection = new window.RTCPeerConnection(ICE_CONFIGURATION);
       this.setupConnectionHandlers();
-      console.log('[WebRTC] Initialized with config:', config);
+      console.log('[WebRTC] Initialized with STUN servers');
     } catch (error) {
       console.error('[WebRTC] Failed to initialize:', error);
     }
@@ -109,7 +91,7 @@ class WebRTCService implements IWebRTCService {
     }
 
     if (!this.peerConnection) {
-      this.peerConnection = new window.RTCPeerConnection(ICE_SERVERS);
+      this.peerConnection = new window.RTCPeerConnection(ICE_CONFIGURATION);
       this.setupConnectionHandlers();
     }
     return this.peerConnection;
@@ -120,9 +102,8 @@ class WebRTCService implements IWebRTCService {
       this.cleanup();
       this.activeTargetId = targetId;
       
-      // Get fresh TURN credentials for each call
-      const config = await this.getIceServers();
-      this.peerConnection = new window.RTCPeerConnection(config);
+      // Initialize with STUN only
+      this.peerConnection = new window.RTCPeerConnection(ICE_CONFIGURATION);
 
       // Set up ICE candidate handler
       this.peerConnection.onicecandidate = ({ candidate }) => {
