@@ -1,17 +1,25 @@
+const getIceServers = () => {
+  try {
+    return JSON.parse(process.env.NEXT_PUBLIC_STUN_SERVERS || '[]');
+  } catch (error) {
+    console.error('[WebRTC] Failed to parse STUN servers:', error);
+    return [
+      {
+        urls: [
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302'
+        ]
+      }
+    ];
+  }
+};
+
 const ICE_CONFIGURATION = {
-  iceServers: [
-    {
-      urls: [
-        'stun:stun.l.google.com:19302',
-        'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302',
-        'stun:stun3.l.google.com:19302'
-      ]
-    }
-  ],
+  iceServers: getIceServers(),
   iceCandidatePoolSize: 10,
   bundlePolicy: 'max-bundle' as RTCBundlePolicy,
-  rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy
+  rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy,
+  sdpSemantics: 'unified-plan'
 };
 
 // Define interface for public methods
@@ -52,7 +60,16 @@ class WebRTCService implements IWebRTCService {
     try {
       this.peerConnection = new window.RTCPeerConnection(ICE_CONFIGURATION);
       this.setupConnectionHandlers();
-      console.log('[WebRTC] Initialized with STUN servers');
+      
+      // Log ICE gathering state changes
+      this.peerConnection.onicegatheringstatechange = () => {
+        console.log('[WebRTC] ICE gathering state:', this.peerConnection?.iceGatheringState);
+      };
+
+      // Log connection state changes
+      this.peerConnection.onconnectionstatechange = () => {
+        console.log('[WebRTC] Connection state:', this.peerConnection?.connectionState);
+      };
     } catch (error) {
       console.error('[WebRTC] Failed to initialize:', error);
     }
@@ -74,13 +91,23 @@ class WebRTCService implements IWebRTCService {
       }
     };
 
-    this.peerConnection.onconnectionstatechange = () => {
-      console.log('[WebRTC] Connection state:', this.peerConnection?.connectionState);
-      if (this.connectionStateHandler && this.peerConnection) {
-        this.connectionStateHandler(this.peerConnection.connectionState);
+    this.peerConnection.oniceconnectionstatechange = () => {
+      console.log('[WebRTC] ICE connection state:', this.peerConnection?.iceConnectionState);
+      if (this.peerConnection?.iceConnectionState === 'disconnected') {
+        this.cleanup();
       }
-      if (this.peerConnection?.connectionState === 'failed') {
-        this.peerConnection.restartIce();
+    };
+
+    this.peerConnection.onconnectionstatechange = () => {
+      const state = this.peerConnection?.connectionState;
+      console.log('[WebRTC] Connection state:', state);
+      
+      if (this.connectionStateHandler && this.peerConnection && state) {
+        this.connectionStateHandler(state);
+      }
+      
+      if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+        this.cleanup();
       }
     };
   }
@@ -240,11 +267,30 @@ class WebRTCService implements IWebRTCService {
   }
 
   private emitSignalingMessage(message: any) {
-    fetch('/api/sse', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'webrtc_signaling', payload: message })
-    }).catch(console.error);
+    // Add retry logic for signaling messages
+    const sendWithRetry = async (retries = 3) => {
+      try {
+        const response = await fetch('/api/sse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'webrtc_signaling',
+            payload: message,
+            receiverId: this.activeTargetId
+          })
+        });
+        
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      } catch (error) {
+        console.error('[WebRTC] Signaling error:', error);
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return sendWithRetry(retries - 1);
+        }
+      }
+    };
+
+    sendWithRetry().catch(console.error);
   }
 
   setOnStreamUpdate(callback: (stream: MediaStream) => void): void {
@@ -255,7 +301,7 @@ class WebRTCService implements IWebRTCService {
     this.connectionStateHandler = handler;
     
     // Apply handler to current connection if exists
-    if (this.peerConnection) {
+    if (this.peerConnection?.connectionState) {
       handler(this.peerConnection.connectionState);
     }
   }
@@ -265,14 +311,30 @@ class WebRTCService implements IWebRTCService {
   }
 
   cleanup(): void {
-    this.localStream?.getTracks().forEach(track => track.stop());
-    this.peerConnection?.close();
-    this.localStream = null;
-    this.remoteStream = null;
-    this.peerConnection = null;
-    this.onStreamHandler = null;
-    this.pendingCandidates = [];
-    this.connectionStateHandler = null;
+    console.log('[WebRTC] Cleaning up connection');
+    try {
+      this.localStream?.getTracks().forEach(track => {
+        try {
+          track.stop();
+        } catch (e) {
+          console.error('[WebRTC] Error stopping track:', e);
+        }
+      });
+      
+      if (this.peerConnection?.signalingState !== 'closed') {
+        this.peerConnection?.close();
+      }
+    } catch (e) {
+      console.error('[WebRTC] Error during cleanup:', e);
+    } finally {
+      this.localStream = null;
+      this.remoteStream = null;
+      this.peerConnection = null;
+      this.onStreamHandler = null;
+      this.pendingCandidates = [];
+      this.connectionStateHandler = null;
+      this.activeTargetId = null;
+    }
   }
 
   getLocalStream(): MediaStream | null {

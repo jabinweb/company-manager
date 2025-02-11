@@ -1,12 +1,10 @@
 'use client'
 
-
 import { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react'
 import { createCallData, type CallData } from '@/types/call'
 import { audioService } from '@/lib/audio-service'
 import { webRTCService } from '@/lib/webrtc-service'
 import { callHandler } from '@/lib/call-handler'
-
 
 interface CallContextType {
   activeCall: CallData | null
@@ -18,9 +16,7 @@ interface CallContextType {
   handleCallEvent: (event: any) => void
 }
 
-
 const CallContext = createContext<CallContextType | null>(null)
-
 
 export function CallProvider({
   children,
@@ -34,7 +30,6 @@ export function CallProvider({
   const [activeCall, setActiveCall] = useState<CallData | null>(null)
   const [incomingCall, setIncomingCall] = useState<CallData | null>(null)
 
-
   // Handle incoming calls
   useEffect(() => {
     const cleanup = callHandler.addListener((call: CallData) => {
@@ -44,11 +39,9 @@ export function CallProvider({
       }
     });
 
-
     // Use the returned cleanup function
     return cleanup;
   }, [currentUser.id]);
-
 
   // Add cleanup effect
   useEffect(() => {
@@ -57,7 +50,6 @@ export function CallProvider({
       webRTCService.cleanup();
     };
   }, []);
-
 
   const initiateCall = useCallback(async (receiverId: string, type: 'audio' | 'video') => {
     try {
@@ -76,12 +68,10 @@ export function CallProvider({
       const offer = await webRTCService.createOffer();
       console.log('[CallContext] Created offer:', offer);
 
-
       // Set call with SDP
       const callWithSdp = { ...callData, sdp: offer };
       setActiveCall(callWithSdp);
       audioService.playDialTone();
-
 
       // Send call with offer
       sendSSEMessage({
@@ -93,14 +83,12 @@ export function CallProvider({
         timestamp: new Date().toISOString()
       });
 
-
       console.log('[CallContext] Call initiated:', callWithSdp);
     } catch (error) {
       console.error('[CallContext] Call initiation failed:', error);
       handleCallEnd(null);
     }
   }, [currentUser, sendSSEMessage]);
-
 
   const handleCallAccept = useCallback(async () => {
     if (!incomingCall?.sdp) {
@@ -109,11 +97,9 @@ export function CallProvider({
       return;
     }
 
-
     try {
       // Stop audio synchronously
       audioService.stopAll();
-
 
       // Initialize WebRTC first
       await webRTCService.initializeCall(
@@ -130,14 +116,12 @@ export function CallProvider({
         }
       );
 
-
       // Create and send answer
       console.log('[CallContext] Creating answer');
       const answer = await webRTCService.handleOffer(incomingCall.sdp);
      
       setActiveCall({ ...incomingCall, status: 'connected' });
       setIncomingCall(null);
-
 
       sendSSEMessage({
         type: 'call_accept',
@@ -152,45 +136,55 @@ export function CallProvider({
     }
   }, [incomingCall, currentUser.id, sendSSEMessage]);
 
-
   const handleCallEnd = useCallback((call: CallData | null) => {
     if (!call) return;
 
-
     console.log('[CallContext] Ending call:', call);
+    
+    // Ensure cleanup happens first
     audioService.stopAll();
     webRTCService.cleanup();
-   
-    // Always notify the other party
-    sendSSEMessage({
-      type: 'call_end',
-      callData: call,
-      senderId: currentUser.id,
-      receiverId: call.receiverId === currentUser.id ? call.callerId : call.receiverId,
-      timestamp: new Date().toISOString()
-    });
-   
+    
+    // Clear local state immediately
     setActiveCall(null);
     setIncomingCall(null);
-  }, [currentUser.id, sendSSEMessage]);
+    
+    // Notify other party with guaranteed delivery
+    const sendEndSignal = async (retries = 3) => {
+      try {
+        await sendSSEMessage({
+          type: 'call_end',
+          callData: call,
+          senderId: currentUser.id,
+          receiverId: call.receiverId === currentUser.id ? call.callerId : call.receiverId,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        if (retries > 0) {
+          console.log('[CallContext] Retrying end signal, attempts left:', retries - 1);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return sendEndSignal(retries - 1);
+        }
+        console.error('[CallContext] Failed to send end signal:', error);
+      }
+    };
 
+    sendEndSignal();
+  }, [currentUser.id, sendSSEMessage]);
 
   const rejectCall = useCallback(() => {
     if (!incomingCall) return;
     handleCallEnd(incomingCall);
   }, [incomingCall, handleCallEnd]);
 
-
   const endCall = useCallback(() => {
     if (!activeCall) return;
     handleCallEnd(activeCall);
   }, [activeCall, handleCallEnd]);
 
-
   const handleCallEvent = useCallback((event: any) => {
     console.log('[CallContext] Handling call event:', event);
     if (!event.callData) return;
-
 
     switch (event.type) {
       case 'call_initiate':
@@ -200,7 +194,6 @@ export function CallProvider({
           audioService.playRingTone();
         }
         break;
-
 
       case 'call_accept':
         if (event.receiverId === currentUser.id && activeCall) {
@@ -226,7 +219,6 @@ export function CallProvider({
                 await webRTCService.createOffer();
               }
 
-
               await webRTCService.handleAnswer(event.sdp);
               setActiveCall(prev => prev ? { ...prev, status: 'connected' } : null);
             } catch (error) {
@@ -237,20 +229,18 @@ export function CallProvider({
         }
         break;
 
-
       case 'call_ice':
         if (activeCall?.callId === event.callId) {
           webRTCService.handleIceCandidate(event.candidate).catch(console.error);
         }
         break;
 
-
       case 'call_reject':
       case 'call_end':
-        console.log('[CallContext] Call end received');
-        // Handle end call from either party
-        if ((activeCall?.callerId === event.senderId) ||
-            (activeCall?.receiverId === event.senderId)) {
+        console.log('[CallContext] Call end/reject received from:', event.senderId);
+        if ((activeCall?.callerId === event.senderId) || 
+            (activeCall?.receiverId === event.senderId) ||
+            (incomingCall?.callerId === event.senderId)) {
           audioService.stopAll();
           webRTCService.cleanup();
           setActiveCall(null);
@@ -258,8 +248,7 @@ export function CallProvider({
         }
         break;
     }
-  }, [currentUser.id, activeCall, sendSSEMessage]);
-
+  }, [currentUser.id, activeCall, incomingCall, sendSSEMessage]);
 
   // Fix connection state monitoring
   useEffect(() => {
@@ -273,11 +262,20 @@ export function CallProvider({
     };
 
     webRTCService.onConnectionStateChange(handleConnectionStateChange);
+    
+    // Check connection periodically
+    const checkConnection = setInterval(() => {
+      const state = webRTCService.getConnectionState();
+      if (state && ['disconnected', 'failed', 'closed'].includes(state)) {
+        handleCallEnd(activeCall);
+      }
+    }, 2000);
+
     return () => {
+      clearInterval(checkConnection);
       webRTCService.offConnectionStateChange();
     };
   }, [activeCall, handleCallEnd]);
-
 
   const value = useMemo(() => ({
     activeCall,
@@ -289,10 +287,8 @@ export function CallProvider({
     handleCallEvent
   }), [activeCall, incomingCall, initiateCall, handleCallAccept, rejectCall, endCall, handleCallEvent]);
 
-
   return <CallContext.Provider value={value}>{children}</CallContext.Provider>;
 }
-
 
 export const useCall = () => {
   const context = useContext(CallContext);

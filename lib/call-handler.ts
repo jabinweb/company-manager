@@ -13,21 +13,29 @@ class CallHandler {
   }
 
   getIceConfiguration(): RTCConfiguration {
-    return {
-      iceServers: [
-        {
-          urls: [
-            'stun:stun.l.google.com:19302',
-            'stun:stun1.l.google.com:19302',
-            'stun:stun2.l.google.com:19302',
-            'stun:stun3.l.google.com:19302'
-          ]
-        }
-      ],
-      iceCandidatePoolSize: 10,
-      bundlePolicy: 'max-bundle',
-      rtcpMuxPolicy: 'require'
-    };
+    try {
+      return {
+        iceServers: JSON.parse(process.env.NEXT_PUBLIC_STUN_SERVERS || '[]'),
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require'
+      };
+    } catch (error) {
+      console.error('[CallHandler] Failed to parse STUN servers:', error);
+      return {
+        iceServers: [
+          {
+            urls: [
+              'stun:stun.l.google.com:19302',
+              'stun:stun1.l.google.com:19302'
+            ]
+          }
+        ],
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require'
+      };
+    }
   }
 
   async initializeCall(callData: CallData): Promise<CallData> {
