@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useChat } from '../../contexts/chat-context';
 import { ChatMessageList } from "@/components/chat/chat-message-list";
-import { ChatBubbleAvatar, ChatBubble, ChatBubbleMessage, ChatBubbleTimestamp } from "./chat-bubble";
+import { ChatBubble, ChatBubbleMessage, ChatBubbleTimestamp } from "./chat-bubble";
 
 interface ChatListProps {
   messages: any[]

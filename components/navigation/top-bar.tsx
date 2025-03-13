@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useSession, signOut } from '@/hooks/use-session'
+import { useSession } from '@/hooks/use-session'
 import { useRouter } from 'next/navigation'
 import { 
   Search,
@@ -72,7 +72,7 @@ export function TopBar({
   profileOptions = [],
 }: TopBarProps) {
   const router = useRouter()
-  const { data: session } = useSession()
+  const { data: session, logout } = useSession()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
 
   const defaultProfileOptions = [
@@ -89,7 +89,7 @@ export function TopBar({
     {
       label: 'Log out',
       icon: <LogOut className="mr-2 h-4 w-4" />,
-      onClick: () => signOut()
+      onClick: () => logout()
     }
   ]
 
@@ -177,7 +177,7 @@ export function TopBar({
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                 <Avatar className="h-8 w-8">
-                  <AvatarImage ref={session?.user?.avatar} alt={session?.user?.name} />
+                  <AvatarImage ref={session?.user?.avatar as React.LegacyRef<HTMLImageElement>} alt={session?.user?.name} />
                   <AvatarFallback>{session?.user?.name?.[0]}</AvatarFallback>
                 </Avatar>
               </Button>

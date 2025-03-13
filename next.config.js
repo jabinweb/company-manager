@@ -1,13 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    domains: [
-      "utfs.io", // Add UploadThing domain
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'utfs.io',
+        pathname: '/**',
+      },
     ],
   },
   typescript: {
     ignoreBuildErrors: true,
-  },
+  }
 }
 
 module.exports = nextConfig

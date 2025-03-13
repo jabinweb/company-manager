@@ -7,7 +7,8 @@ import { ROUTES, getRoleBasedPath } from '@/utils/route-helpers'
 const isStaticResource = (pathname: string): boolean =>
   pathname.startsWith('/_next/') ||
   pathname.startsWith('/favicon.ico') ||
-  pathname.startsWith('/public/')
+  pathname.startsWith('/public/') ||
+  pathname.startsWith('/api/uploadthing')
 
 const isPublicApiRoute = (pathname: string): boolean =>
   ROUTES.API.PUBLIC.some(route => pathname.startsWith(route))
@@ -24,61 +25,30 @@ export interface AuthenticatedRequest extends NextRequest {
   }
 }
 
-// Middleware function
-export default async function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
-  // console.log('Middleware processing:', pathname, 'Method:', req.method)
 
-  // Static and public routes checks
+  // Skip auth for static and public routes
   if (isStaticResource(pathname) || isPublicApiRoute(pathname) || isPublicRoute(pathname)) {
-    console.log('Skipping auth check for:', pathname)
     return NextResponse.next()
   }
 
   try {
     const token = req.cookies.get('auth-token')?.value
-    // console.log('Token check in middleware:', token ? 'present' : 'missing')
-
     if (!token) {
-      if (!isPublicRoute(pathname)) {
-        console.log('No token, redirecting to login')
-        const loginPath = pathname.startsWith('/employee') ? '/employee/login' : '/login'
-        return NextResponse.redirect(new URL(`${loginPath}`, req.url))
-      }
-      return NextResponse.next()
+      console.log('No token found in cookies:', token);
+      
+      return 
     }
 
     const payload = await verifyJWTApi(token)
-    // console.log('JWT payload in middleware:', payload?.role)
-
     if (!payload) {
-      console.log('Invalid token, redirecting to login')
-      return NextResponse.redirect(new URL('/login', req.url))
+      console.log('Invalid token payload:', payload);
+      
+      return redirectToLogin(req)
     }
 
-    // Allow API routes to proceed
-    if (pathname.startsWith('/api/')) {
-      return NextResponse.next()
-    }
-
-    // Handle authenticated routes
-    if (isPublicRoute(pathname)) {
-      const redirectPath = getRoleBasedPath(payload.role)
-      console.log('Redirecting authenticated user to:', redirectPath)
-      return NextResponse.redirect(new URL(redirectPath, req.url))
-    }
-
-    // Don't redirect if already on the correct path
-    if (pathname === getRoleBasedPath(payload.role)) {
-      return NextResponse.next()
-    }
-
-    // Only redirect root path to role-based dashboard
-    if (pathname === '/') {
-      return NextResponse.redirect(new URL(getRoleBasedPath(payload.role), req.url))
-    }
-
-    // Role-specific protections
+    // Role-based access control
     if (pathname.startsWith('/admin') && payload.role !== 'SUPER_ADMIN') {
       return NextResponse.redirect(new URL(getRoleBasedPath(payload.role), req.url))
     }
@@ -87,20 +57,23 @@ export default async function middleware(req: NextRequest) {
       return NextResponse.redirect(new URL(getRoleBasedPath(payload.role), req.url))
     }
 
-    if (pathname.startsWith('/employee') && !pathname.startsWith('/employee/login')) {
-      const requestHeaders = new Headers(req.headers)
-      requestHeaders.set('x-user-id', payload.userId)
-      requestHeaders.set('x-user-role', payload.role)
-
-      return NextResponse.next({
-        headers: requestHeaders
-      })
+    // Handle authenticated routes
+    if (isPublicRoute(pathname)) {
+      return NextResponse.redirect(new URL(getRoleBasedPath(payload.role), req.url))
     }
 
-    // Add user info to headers for API routes
+    // Root path redirection
+    if (pathname === '/') {
+      return NextResponse.redirect(new URL(getRoleBasedPath(payload.role), req.url))
+    }
+
+    // Add user info to headers
     const requestHeaders = new Headers(req.headers)
-    requestHeaders.set('x-user-id', payload.userId)
+    if (payload.employeeId) {
+      requestHeaders.set('x-user-id', payload.employeeId)
+    }
     requestHeaders.set('x-user-role', payload.role)
+    requestHeaders.set('x-company-id', payload.companyId.toString())
 
     return NextResponse.next({
       headers: requestHeaders
@@ -108,12 +81,20 @@ export default async function middleware(req: NextRequest) {
 
   } catch (error) {
     console.error('Middleware error:', error)
-    return NextResponse.redirect(new URL('/login', req.url))
+    return redirectToLogin(req)
   }
+}
+
+function redirectToLogin(req: NextRequest) {
+  const loginPath = '/auth/login'
+  const loginUrl = new URL(loginPath, req.url)
+  loginUrl.searchParams.set('from', req.nextUrl.pathname)
+  return NextResponse.redirect(loginUrl)
 }
 
 export const config = {
   matcher: [
-    '/((?!api/uploadthing|_next/static|_next/image|favicon.ico).*)',
-  ],
+    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/api/((?!auth|uploadthing).*)/:path*'
+  ]
 }

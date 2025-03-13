@@ -73,6 +73,7 @@ export const NAV_ITEMS: NavItems = {
         }
       ]
     },
+  
     {
       href: '/employee/payroll',
       title: 'Payroll',
@@ -106,6 +107,11 @@ export const NAV_ITEMS: NavItems = {
           icon: <Clock className="mr-2 h-4 w-4" />
         }
       ]
+    },
+    {
+      href: "/employee/leads",
+      title: "Leads",
+      icon: <User className="mr-2 h-4 w-4" />,
     },
     {
       href: '/employee/tasks',
@@ -154,6 +160,11 @@ export const NAV_ITEMS: NavItems = {
     href: "/dashboard/employees",
     title: "Employees",
     icon: <Package2 className="mr-2 h-4 w-4" />,
+  },
+  {
+    href: "/dashboard/leads",
+    title: "Leads",
+    icon: <User className="mr-2 h-4 w-4" />,
   },
   {
     href: "/dashboard/products",

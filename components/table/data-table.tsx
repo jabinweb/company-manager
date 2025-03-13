@@ -28,11 +28,11 @@ import { DataTableToolbar } from './data-table-toolbar'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { TableSkeleton } from './table-skeleton'
 
-interface DataTableProps<TData> {
+export interface DataTableProps<TData> {
   columns: ColumnDef<TData>[]
   data: TData[]
   isLoading?: boolean
-  searchableColumn?: string
+  searchableColumn?: string // Changed from keyof TData to string
   filterableColumns?: {
     [key: string]: {
       title: string
@@ -99,6 +99,22 @@ export function DataTable<TData>({
     getFacetedUniqueValues: getFacetedUniqueValues(),
   })
 
+  const handleFilterChange = (columnId: string, selectedValues: string[]) => {
+    const newFilters = {
+      ...table.getState().columnFilters.reduce((acc, filter) => ({
+        ...acc,
+        [filter.id]: filter.value
+      }), {}),
+      [columnId]: selectedValues
+    }
+    
+    onFiltersChange?.(newFilters)
+  }
+
+  if (isLoading) {
+    return <TableSkeleton columnCount={columns.length} />
+  }
+
   return (
     <div className='space-y-4'>
       <DataTableToolbar 
@@ -127,9 +143,7 @@ export function DataTable<TData>({
               ))}
             </TableHeader>
             <TableBody>
-              {isLoading ? (
-                <TableSkeleton columnCount={columns.length} />
-              ) : table.getRowModel().rows?.length ? (
+              {table.getRowModel().rows?.length ? (
                 table.getRowModel().rows.map((row) => (
                   <TableRow
                     key={row.id}

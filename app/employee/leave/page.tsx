@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { useSession } from "@/hooks/use-session"
 import { toast } from "@/hooks/use-toast"
-import { DateRangePicker } from "@/components/employee/date-range-picker"
+import { DateRangePicker } from "@/components/dashboard/date-range-picker"
 
 interface LeaveRequest {
   id: string

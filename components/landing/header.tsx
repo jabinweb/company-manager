@@ -46,7 +46,7 @@ export function LandingHeader() {
               ) : (
                 <>
                   <Button variant="secondary" size="sm" asChild>
-                    <Link href="/login">Login</Link>
+                    <Link href="/auth/login">Login</Link>
                   </Button>
                   <Button size="sm" asChild>
                     <Link href="/register">Get Started</Link>

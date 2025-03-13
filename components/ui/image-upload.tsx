@@ -12,12 +12,14 @@ interface ImageUploadProps {
   value?: string | null;
   onChange: (value: string) => void;
   disabled?: boolean;
+  className: string;
 }
 
 export function ImageUpload({
   value,
   onChange,
-  disabled
+  disabled,
+  className
 }: ImageUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -88,7 +90,7 @@ export function ImageUpload({
   );
 
   return (
-    <div className="space-y-4 w-full">
+    <div className={`space-y-4 w-fit ${className}`}>
       <div
         onClick={() => !disabled && !isUploading && inputRef.current?.click()}
         onDrop={handleDrop}
@@ -113,7 +115,7 @@ export function ImageUpload({
         />
         
         {value ? (
-          <div className="relative aspect-square w-full">
+          <div className="relative aspect-square w-[100px]">
             <Image
               src={value}
               alt="Uploaded image"
@@ -125,7 +127,7 @@ export function ImageUpload({
                 type="button"
                 variant="destructive"
                 size="icon"
-                className="absolute top-2 right-2"
+                className="absolute top-[-1rem] right-[-1rem]"
                 onClick={(e) => {
                   e.stopPropagation();
                   onChange('');

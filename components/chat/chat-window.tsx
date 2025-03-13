@@ -14,7 +14,7 @@ export function ChatWindow() {
     messages, 
     selectedChat, 
     isLoading,
-    sendTextMessage,
+    sendMessage,
     currentUserId,
     notifyTyping,
     typingUsers,
@@ -60,7 +60,7 @@ export function ChatWindow() {
             key={getMessageKey(message)}
             message={message}
             isOwn={message.senderId === currentUserId}
-            isPending={pendingMessages?.has(message.id)}
+            isPending={pendingMessages?.has(String(message.id))}
           />
         ))}
         {typingUsers.has(selectedChat) && (
@@ -76,7 +76,7 @@ export function ChatWindow() {
       </ChatMessageList>
 
       <ChatBottombar 
-        onSend={(content) => sendTextMessage(content, selectedChat)}
+        onSend={(content) => sendMessage(content, selectedChat)}
         onTyping={() => notifyTyping(selectedChat)}
         disabled={isLoading}
         receiverId={selectedChat}

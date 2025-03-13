@@ -19,7 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { InventoryManagement } from "@/components/inventory-management"
+import { InventoryManagement } from "@/components/inventory/inventory-management"
 
 interface Product {
   id: string

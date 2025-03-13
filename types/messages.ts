@@ -1,41 +1,47 @@
-import { MessageStatus } from '@prisma/client';
+import { MessageStatus, UserStatus } from '@prisma/client';
+import type { SSEMessage, SSEEventTypes } from './sse';
 
-// Add client-side message statuses
-export type ClientMessageStatus = MessageStatus | 'SENDING' | 'FAILED';
+export type MessageType = 'TEXT' | 'IMAGE' | 'FILE' | 'new_message' | 'typing';
+export type ClientMessageStatus = MessageStatus | 'SENDING' | 'FAILED' | 'DELIVERED' | 'READ' | 'RECEIVED' | 'PENDING';
 
-export type MessageType = 'new_message' | 'typing' | 'user_status' | 'call';
-export type UserStatus = 'online' | 'offline';
-
-interface BaseMessage {
-  id: string;
+// Base message interface for all message types
+export interface BaseMessage {
+  id: string | number; // Allow both string and number IDs
+  senderId: string;
+  receiverId: string;
+  content: string;
+  timestamp: string;
+  createdAt: string;
+  status: ClientMessageStatus;
   type: MessageType;
+}
+
+export interface ChatMessagePayload extends SSEMessage {
+  type: Extract<SSEEventTypes, 'chat_message' | 'typing'>
+  payload: {
+    id: string
+    senderId: string
+    receiverId: string
+    content: string
+    timestamp: string
+  }
+}
+
+export interface MessageAPIPayload {
+  id: string;  // Add id to the interface
+  type: string;
+  content: string;
   senderId: string;
   receiverId: string;
   timestamp: string;
 }
 
-export interface TextMessage extends BaseMessage {
-  type: 'new_message';
-  content: string;
-  status: ClientMessageStatus; // Update the status type
-  sender: {
-    id: string;
-    name: string;
-    avatar: string | null;
+export interface Message extends BaseMessage {
+  sender?: {
+    avatar?: string;
+    name?: string;
   };
 }
-
-export interface StatusMessage extends BaseMessage {
-  type: 'user_status';
-  status: UserStatus;
-  onlineUsers?: string[]; // Make onlineUsers optional in the base type
-}
-
-export interface TypingMessage extends BaseMessage {
-  type: 'typing';
-}
-
-export type Message = TextMessage | TypingMessage | StatusMessage;
 
 export interface MessageResponse {
   success: boolean;
@@ -43,6 +49,7 @@ export interface MessageResponse {
 }
 
 export interface ChatContextType {
+  createMessage: (content: string, receiverId: string) => Promise<void>;
   messages: Message[];
   isTyping: boolean;
   onlineUsers: Set<string>;
@@ -50,8 +57,3 @@ export interface ChatContextType {
   pendingMessages: Set<string>;
   // ... rest of existing properties
 }
-
-export type MessageAPIPayload = 
-  | (Omit<TextMessage, 'id' | 'sender' | 'status'> & { content: string })
-  | (Omit<StatusMessage, 'id' | 'onlineUsers'> & { status: UserStatus }) // Remove onlineUsers from the payload
-  | TypingMessage;

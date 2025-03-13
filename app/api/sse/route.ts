@@ -1,88 +1,94 @@
-import { NextRequest } from 'next/server';
-import { getServerSession } from '@/lib/server-session';
-import { sseStore } from '@/lib/sse-store';
+import { NextRequest } from 'next/server'
+import { getServerSession } from '@/lib/server-session'
+import { prisma } from '@/lib/prisma'
 
-export const runtime = 'edge';
-export const dynamic = 'force-dynamic';
+export const dynamic = 'force-dynamic'
+export const preferredRegion = 'auto'
+export const maxDuration = 60 // 1 minutes
+
+const connections = new Map<string, WritableStreamDefaultWriter<any>>()
+const encoder = new TextEncoder()
+const HEARTBEAT_INTERVAL = 30000 // 30 seconds
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getServerSession();
-    if (!session?.user?.employeeId) return new Response('Unauthorized', { status: 401 });
+    const session = await getServerSession()
+    if (!session?.user?.employeeId) {
+      return new Response('Unauthorized', { status: 401 })
+    }
 
-    const userId = session.user.employeeId;
-    const connectionId = crypto.randomUUID();
+    const userId = session.user.employeeId
+    const stream = new TransformStream()
+    const writer = stream.writable.getWriter()
 
-    const stream = new ReadableStream({
-      start(controller) {
-        sseStore.addUser(userId, connectionId, controller);
+    // Send initial connection message
+    await writer.write(
+      encoder.encode(`data: ${JSON.stringify({ type: 'connected' })}\n\n`)
+    )
 
-        // Keep connection alive
-        const keepAlive = setInterval(() => {
-          try {
-            controller.enqueue(new TextEncoder().encode(': keepalive\n\n'));
-          } catch (error) {
-            clearInterval(keepAlive);
-          }
-        }, 15000);
-
-        // Cleanup on disconnect
-        req.signal.addEventListener('abort', () => {
-          clearInterval(keepAlive);
-          sseStore.removeUser(userId, connectionId, controller);
-        });
+    let isConnected = true
+    const heartbeat = setInterval(async () => {
+      if (!isConnected) {
+        clearInterval(heartbeat)
+        return
       }
-    });
+      try {
+        await writer.write(
+          encoder.encode(`data: ${JSON.stringify({ type: 'heartbeat' })}\n\n`)
+        )
+      } catch {
+        isConnected = false
+        clearInterval(heartbeat)
+      }
+    }, HEARTBEAT_INTERVAL)
 
-    return new Response(stream, {
+    // Cleanup on disconnect
+    req.signal.addEventListener('abort', () => {
+      isConnected = false
+      clearInterval(heartbeat)
+      writer.close()
+    })
+
+    return new Response(stream.readable, {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
-        'Keep-Alive': 'timeout=60',
-        'X-Accel-Buffering': 'no'
+      },
+    })
+  } catch (error) {
+    console.error('[SSE] Error:', error)
+    return new Response('Error', { status: 500 })
+  }
+}
+
+// Helper to broadcast messages to connected clients
+export async function broadcast(message: any, excludeSessionId?: string) {
+  const encoder = new TextEncoder()
+  const encoded = encoder.encode(`data: ${JSON.stringify(message)}\n\n`)
+
+  // Use Array.from to convert Map entries to array for iteration
+  await Promise.all(
+    Array.from(connections).map(async ([sessionId, writer]) => {
+      if (sessionId !== excludeSessionId) {
+        try {
+          await writer.write(encoded)
+        } catch (error) {
+          connections.delete(sessionId)
+        }
       }
-    });
-  } catch (error) {
-    console.error('[SSE] Error:', error);
-    return new Response('Error', { status: 500 });
-  }
+    })
+  )
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const session = await getServerSession();
-    if (!session?.user?.employeeId) return new Response('Unauthorized', { status: 401 });
-
-    const data = await req.json();
-    
-    // For call events, broadcast to specific recipient
-    if (data.type?.startsWith('call_')) {
-      sseStore.sendMessage(data.receiverId, {
-        ...data,
-        senderId: session.user.employeeId,
-        timestamp: new Date().toISOString()
-      });
-      return new Response('OK');
-    }
-
-    // For chat messages
-    if (data.type === 'new_message') {
-      sseStore.sendMessage(data.receiverId, {
-        ...data,
-        senderId: session.user.employeeId,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    return new Response('OK', {
-      headers: { 'Cache-Control': 'no-store' }
-    });
-  } catch (error) {
-    console.error('[SSE] Error:', error);
-    return new Response('Error', { status: 500 });
-  }
-}
+// Clean up on module reload
+globalThis.addEventListener?.('beforeunload', () => {
+  // Use Array.from for values iteration
+  Array.from(connections.values()).forEach(writer => {
+    writer.close()
+  })
+  connections.clear()
+})
 
 
 

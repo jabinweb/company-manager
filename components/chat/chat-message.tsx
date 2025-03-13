@@ -13,7 +13,8 @@ interface ChatMessageProps {
 }
 
 export function ChatMessage({ message, isOwn, isPending }: ChatMessageProps) {
-  if (message.type !== 'new_message') return null;
+  // Accept both 'TEXT' and 'new_message' types
+  if (message.type !== 'TEXT' && message.type !== 'new_message') return null;
 
   return (
     <div className={cn(

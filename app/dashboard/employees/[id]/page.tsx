@@ -29,64 +29,8 @@ import {
 import Link from "next/link";
 import { EditEmployeeDialog } from './edit-employee-dialog'
 import { toast } from "@/hooks/use-toast"
-
-// Update interface to match Prisma schema
-interface Employee {
-  id: string;
-  employeeId: string;
-  name: string;
-  email: string;
-  phone: string;
-  address: {
-    street: string;
-    city: string;
-    state: string;
-    zipCode: string;
-    country: string;
-  };
-  jobTitle: string;
-  department: string;
-  dateJoined: Date;
-  role: EmployeeRole;
-  employmentType: EmploymentType;
-  status: EmployeeStatus;
-  companyId: number;
-  managerId: string | null;
-  userManagerId: number | null;
-  createdAt: Date;
-  updatedAt: Date;
-  isApproved: boolean;
-  avatar: string | null;
-}
-
-// Add enums from Prisma schema
-enum EmploymentType {
-  FULL_TIME = "FULL_TIME",
-  PART_TIME = "PART_TIME",
-  CONTRACT = "CONTRACT",
-  INTERN = "INTERN",
-  TEMPORARY = "TEMPORARY",
-  INDEPENDENT_CONTRACTOR = "INDEPENDENT_CONTRACTOR",
-  VOLUNTEER = "VOLUNTEER",
-  SELF_EMPLOYED = "SELF_EMPLOYED"
-}
-
-enum EmployeeStatus {
-  PENDING = "PENDING",
-  ACTIVE = "ACTIVE",
-  ON_LEAVE = "ON_LEAVE",
-  SUSPENDED = "SUSPENDED",
-  TERMINATED = "TERMINATED",
-  SABBATICAL = "SABBATICAL",
-  MEDICAL_LEAVE = "MEDICAL_LEAVE",
-  MATERNITY_LEAVE = "MATERNITY_LEAVE"
-}
-
-enum EmployeeRole {
-  EMPLOYEE = "EMPLOYEE",
-  MANAGER = "MANAGER",
-  ADMIN = "ADMIN"
-}
+import { SalaryForm } from '@/components/employees/salary-form'
+import { EmployeeData, EmploymentType, EmployeeStatus } from '@/types/employee'
 
 interface Metadata {
   employmentTypes: string[];
@@ -97,8 +41,10 @@ export default function EmployeePage() {
   const router = useRouter();
   const { data: session, status } = useSession();
 
-  const params = useParams();
-  const [employee, setEmployee] = useState<Employee | null>(null);
+  // Get id from params and ensure it's a string
+  const { id } = useParams() as { id: string }
+
+  const [employee, setEmployee] = useState<EmployeeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -108,7 +54,7 @@ export default function EmployeePage() {
       if (status === "loading") return;
 
       try {
-        const response = await fetch(`/api/employees/${params.id}`);
+        const response = await fetch(`/api/employees/${id}`);
         if (!response.ok) throw new Error('Failed to fetch employee');
         
         const data = await response.json();
@@ -133,19 +79,19 @@ export default function EmployeePage() {
     }
 
     fetchEmployee();
-  }, [session, params.id, status, router]);
+  }, [session, id, status, router]);
 
   const handleStatusUpdate = async (field: 'status' | 'employmentType', value: EmployeeStatus | EmploymentType) => {
     if (!employee) return;
 
     try {
-      const response = await fetch(`/api/employees/${params.id}`, {
+      const response = await fetch(`/api/employees/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...employee,
           [field]: value,
-          updatedAt: new Date()
+          updatedAt: new Date().toISOString()
         }),
       });
 
@@ -290,6 +236,10 @@ export default function EmployeePage() {
                 </div>
               </div>
             </Card>
+            <SalaryForm 
+              employeeId={id} 
+              initialData={employee.salary}
+            />
           </div>
 
           {/* Right Column - Status & Quick Actions */}

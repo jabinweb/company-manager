@@ -177,7 +177,7 @@ export function CallDialog({ call, onAccept, onReject, onClose, isIncoming, rece
         localVideoRef.current.srcObject = localStream;
       }
     }
-  }, [call?.status, call?.sdp]);
+  }, [call, call?.status, call?.sdp]);
 
 
   // Modify audio effect to work with interaction state
@@ -208,12 +208,11 @@ export function CallDialog({ call, onAccept, onReject, onClose, isIncoming, rece
     } else if (!call || call.status !== 'connected') {
       setCallStartTime(null)
     }
-  }, [call?.status])
+  }, [call, call?.status, callStartTime])
 
 
   // Early return if no call data
   if (!call) {
-    console.log('[CallDialog] No call data, not rendering');
     return (
       <Dialog open={false} onOpenChange={onClose}>
         <DialogContent className="sm:max-w-md" />

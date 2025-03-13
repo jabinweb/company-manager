@@ -6,7 +6,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { cn } from "@/lib/utils";
 import { Sidebar } from "./sidebar";
 import { Chat } from "./chat";
-import { ChatProvider } from '../../contexts/chat-context';
+import { ChatProvider } from '@/contexts/chat-context';
 import { User } from "@/types";
 import { useMessageStore } from '@/lib/stores/message-store';
 
@@ -14,13 +14,6 @@ interface ChatLayoutProps {
   defaultLayout: number[] | undefined;
   defaultCollapsed?: boolean;
   navCollapsedSize: number;
-}
-
-interface Employee {
-  id: string;
-  name: string;
-  avatar: string | null;
-  department: string;
 }
 
 type ExtendedUser = {
@@ -41,9 +34,7 @@ export function ChatLayout({
     avatar: string
   } | null>(null);
   
-  const setContacts = useMessageStore((state) => state.setContacts);
-  const addMessage = useMessageStore((state) => state.addMessage);
-  const markAsRead = useMessageStore((state) => state.markAsRead);
+  const messageStore = useMessageStore();
 
   // Fetch sorted contacts
   useEffect(() => {
@@ -64,7 +55,7 @@ export function ChatLayout({
           } : undefined
         }));
         
-        setContacts(formattedContacts);
+        messageStore.setContacts(formattedContacts);
 
         // Set first contact as default if none selected
         if (!selectedChatItem && formattedContacts.length > 0) {
@@ -82,7 +73,7 @@ export function ChatLayout({
     if (session?.user?.currentCompanyId) {
       fetchSortedContacts();
     }
-  }, [session?.user?.currentCompanyId, setContacts]);
+  }, [session?.user?.currentCompanyId, messageStore, selectedChatItem]);
 
   // Listen for SSE messages
   useEffect(() => {
@@ -98,17 +89,17 @@ export function ChatLayout({
           const isSender = data.senderId === session.user.employeeId;
           const contactId = isSender ? data.receiverId : data.senderId;
           
-          // Update message store with new message
-          addMessage({
-            contactId,
+          messageStore.addMessage(contactId, {
+            id: data.id,
             content: data.content,
+            senderId: data.senderId,
+            receiverId: contactId,
             timestamp: data.timestamp,
-            isSender
+            status: 'SENT'
           });
 
-          // Auto mark as read if chat is open
           if (selectedChatItem?.id === contactId) {
-            markAsRead(contactId);
+            messageStore.markAsRead(contactId);
           }
         }
       } catch (error) {
@@ -127,7 +118,7 @@ export function ChatLayout({
     };
 
     return () => eventSource.close();
-  }, [session?.user?.employeeId, selectedChatItem, addMessage, markAsRead]);
+  }, [session?.user?.employeeId, selectedChatItem, messageStore]);
 
   // Mobile responsiveness
   useEffect(() => {
@@ -141,7 +132,11 @@ export function ChatLayout({
 
   function handleSelectUser(user: { id: string; name: string; avatar: string }) {
     setSelectedChatItem(user);
-    markAsRead(user.id); // Mark messages as read when selecting chat
+    if (messageStore.markAsRead) {
+      messageStore.markAsRead(user.id).catch(error => {
+        console.error('Failed to mark messages as read:', error);
+      });
+    }
   }
 
   if (!session?.user) return null;

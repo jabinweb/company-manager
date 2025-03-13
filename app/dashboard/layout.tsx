@@ -1,9 +1,12 @@
 'use client'
-
 import { useSession } from '@/hooks/use-session'
 import DashboardSidebar from '@/components/dashboard-sidebar'
 import { TopBar } from "@/components/navigation/top-bar"
 import { NAV_ITEMS } from '@/components/navigation/nav-items'
+import { ScrollArea } from '@radix-ui/react-scroll-area'
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { LoadingSpinner } from '@/components/ui/loading'
 
 export default function DashboardLayout({
   children,
@@ -11,30 +14,38 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   const { data: session, status } = useSession()
-  const user = session?.user
+  const router = useRouter()
 
-  // if (status === 'loading') {
-  //   return (
-  //     <div className="flex min-h-screen items-center justify-center">
-  //       <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-primary"></div>
-  //     </div>
-  //   )
-  // }
+  useEffect(() => {
+    // Check session and redirect if needed
+    if (status === 'unauthenticated') {
+      router.push('/auth/login')
+    }
+  }, [status, router])
 
-  if (!user) {
-    // Handle no user state - could redirect to login or show error
+  // Show loading state
+  if (status === 'loading') {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <LoadingSpinner />
+      </div>
+    )
+  }
+
+  // Don't render anything while checking auth
+  if (!session?.user) {
     return null
   }
 
-  const navItems = user.role === 'SUPER_ADMIN' ? NAV_ITEMS.SUPER_ADMIN : NAV_ITEMS.ADMIN
-  const title = user.role === 'SUPER_ADMIN' ? 'Super Admin Dashboard' : 'Admin Dashboard'
+  const navItems = session.user.role === 'SUPER_ADMIN' ? NAV_ITEMS.SUPER_ADMIN : NAV_ITEMS.ADMIN
+  const title = session.user.role === 'SUPER_ADMIN' ? 'Super Admin Dashboard' : 'Admin Dashboard'
 
   return (
     <div className="flex min-h-screen">
       <DashboardSidebar navItems={navItems} />
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col px-6">
         <TopBar 
-          userRole={user.role}
+          userRole={session.user.role}
           title={title}
           showMessages={false}
           navigationItems={navItems.map(item => ({
@@ -42,10 +53,12 @@ export default function DashboardLayout({
             label: item.title,
             icon: item.icon
           }))}
-        />
-        <main className="flex-1">
+      />
+      <main className="flex-1">
+        <ScrollArea className="h-[calc(100vh-5rem)] overflow-y-auto">
           {children}
-        </main>
+        </ScrollArea>
+      </main>
       </div>
     </div>
   )

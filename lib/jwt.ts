@@ -1,50 +1,62 @@
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
-import { JWT_CONFIG } from '@/config/jwt'
-import type { TokenPayload } from '@/config/jwt'
+import { AUTH_CONFIG } from '@/config/auth'
 import type { ResponseCookie } from 'next/dist/compiled/@edge-runtime/cookies'
+import type { TokenPayload, JWTPayload } from '@/types/auth'
 
-const secret = new TextEncoder().encode(JWT_CONFIG.secret)
+// Ensure consistent secret encoding
+const getSecret = () => {
+  const secret = AUTH_CONFIG.JWT.secret
+  // console.log('[JWT] Secret length:', secret.length)
+  return new TextEncoder().encode(secret)
+}
+
+const secret = getSecret()
 
 // Main JWT functions
 export async function signJWTApi(payload: TokenPayload) {
   try {
-    // Use the payload's companyId or primaryCompanyId
-    const finalPayload: TokenPayload = {
-      ...payload,
-      companyId: payload.companyId || payload.primaryCompanyId || 0,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60) // 7 days
-    }
+    const iat = Math.floor(Date.now() / 1000)
+    const exp = iat + AUTH_CONFIG.JWT.expiresIn // Add to current time
 
-    return await new SignJWT(finalPayload)
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(JWT_CONFIG.expiresIn)
+    const token = await new SignJWT({ ...payload })
+      .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+      .setIssuedAt(iat)
+      .setExpirationTime(exp) // Use the calculated exp time
+      .setIssuer(AUTH_CONFIG.JWT.issuer)
+      .setAudience(AUTH_CONFIG.JWT.audience)
       .sign(secret)
+
+    console.log('[JWT] Token signed:', { iat, exp, tokenLength: token.length })
+    return token
   } catch (error) {
-    console.error('JWT Sign Error:', error)
+    console.error('[JWT] Sign Error:', error)
     throw new Error('Failed to sign JWT')
   }
 }
 
 export async function verifyJWTApi(token: string): Promise<TokenPayload | null> {
   try {
-    // console.log('JWT verification starting')
-    const { payload } = await jwtVerify(token, secret, {
-      algorithms: ['HS256']
-    })
+    // console.log('[JWT] Verifying token:', token.substring(0, 20) + '...')
     
-    // Validate required fields
-    if (!payload.id || !payload.email || !payload.role || !payload.status) {
-      console.error('Invalid token payload structure')
-      return null
-    }
+    const { payload } = await jwtVerify(token, secret, {
+      issuer: AUTH_CONFIG.JWT.issuer,
+      audience: AUTH_CONFIG.JWT.audience,
+      clockTolerance: 60 // 1 minute tolerance for clock skew
+    })
 
-    // console.log('JWT verified successfully')
-    return payload as TokenPayload
-  } catch (error) {
-    console.error('JWT Verify Error:', error)
+    // console.log('[JWT] Token verified:', { 
+    //   userId: payload.id,
+    //   exp: payload.exp,
+    //   iat: payload.iat
+    // })
+
+    return { ...payload as TokenPayload, isValid: true }
+  } catch (error: any) {
+    console.error('[JWT] Verification error:', {
+      error,
+      token: token.substring(0, 20) + '...'
+    })
     return null
   }
 }
@@ -52,7 +64,7 @@ export async function verifyJWTApi(token: string): Promise<TokenPayload | null> 
 // Cookie management
 export function setAuthCookie(token: string): ResponseCookie {
   return {
-    name: JWT_CONFIG.cookieName,
+    name: AUTH_CONFIG.COOKIE.name,
     value: token,
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
@@ -64,15 +76,15 @@ export function setAuthCookie(token: string): ResponseCookie {
 
 export async function getAuthCookie() {
   const cookieStore = await cookies()
-  const token = cookieStore.get(JWT_CONFIG.cookieName)?.value
+  const token = cookieStore.get(AUTH_CONFIG.COOKIE.name)?.value
   return token
 }
 
 export async function removeAuthCookie() {
   const cookieStore = await cookies()
   cookieStore.set({
-    name: JWT_CONFIG.cookieName,
-    value: '',
+    name: AUTH_CONFIG.COOKIE.name,
+    value: '', // Add a value property
     expires: new Date(0),
     path: '/',
     httpOnly: true,

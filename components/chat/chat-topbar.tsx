@@ -1,3 +1,5 @@
+'use client'
+
 import React, { useEffect, useCallback, useMemo } from "react";
 import { Avatar, AvatarImage } from "../ui/avatar";
 import { Info, Phone, PhoneOff, Video, VideoOff } from "lucide-react";
@@ -5,7 +7,6 @@ import { cn } from "@/lib/utils";
 import { Button } from "../ui/button";
 import { useChat } from "@/contexts/chat-context";
 import { CallDialog } from './call-dialog';
-import { useCall } from "@/contexts/call-context";
 
 interface ChatTopbarProps {
   selectedUser: {
@@ -16,8 +17,15 @@ interface ChatTopbarProps {
 }
 
 export default function ChatTopbar({ selectedUser }: ChatTopbarProps) {
-  const { onlineUsers } = useChat();
-  const { initiateCall, activeCall, incomingCall, acceptCall, rejectCall, endCall } = useCall();
+  const { 
+    onlineUsers,
+    initiateCall,
+    activeCall,
+    incomingCall,
+    acceptCall,
+    rejectCall,
+    endCall 
+  } = useChat(); // Get all methods from useChat
 
   // Track online status for selected user with debug logging
   const isUserOnline = useMemo(() => {

@@ -1,36 +1,33 @@
-'use client'
+'use client';
 
-import { AuthProvider, useAuth } from '@/contexts/auth-context'
-import { createContext } from 'react'
-import type { Session } from '@/types/auth'
+import { createContext, useContext, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useSessionStore } from '@/lib/session';
 
-interface SessionContextType {
-  data: Session | null
-  status: 'loading' | 'authenticated' | 'unauthenticated'
-  update: () => Promise<void>
-}
-
-export const SessionContext = createContext<SessionContextType | null>(null)
+const SessionContext = createContext<ReturnType<typeof useSessionStore> | null>(null);
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
-  return (
-    <AuthProvider>
-      <SessionConsumer>{children}</SessionConsumer>
-    </AuthProvider>
-  )
-}
+  const session = useSessionStore();
+  const router = useRouter();
 
-function SessionConsumer({ children }: { children: React.ReactNode }) {
-  const auth = useAuth()
+  useEffect(() => {
+    if (!session.token) {
+      const currentPath = window.location.pathname;
+      if (!currentPath.startsWith('/auth/')) {
+        router.push(`/auth/login?from=${currentPath}`);
+      }
+    }
+  }, [session.token, router]);
+
   return (
-    <SessionContext.Provider 
-      value={{
-        data: auth.data,
-        status: auth.status,
-        update: auth.update
-      }}
-    >
+    <SessionContext.Provider value={session}>
       {children}
     </SessionContext.Provider>
-  )
+  );
 }
+
+export const useSession = () => {
+  const context = useContext(SessionContext);
+  if (!context) throw new Error('useSession must be used within SessionProvider');
+  return context;
+};

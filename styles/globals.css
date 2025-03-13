@@ -6,4 +6,52 @@
   .bg-grid-black {
     background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23000000' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
   }
+
+  .animate-in {
+    animation: animate-in 0.3s ease-in-out;
+    animation-duration: 150ms;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    @apply transition-[opacity,transform] duration-300;
+  }
+  
+  .fade-in {
+    opacity: 0;
+    animation: fade-in 0.3s ease-in-out forwards;
+  }
+  
+  .slide-in-from-bottom-4 {
+    transform: translateY(1rem);
+    animation: slide-in-from-bottom 0.3s ease-out forwards;
+  }
+
+  .fade-in-0 {
+    opacity: 0;
+    animation: instant-fade-in 150ms ease forwards;
+  }
+
+  .fade-in-50 {
+    opacity: 0;
+    animation: fadeIn 0.2s ease forwards;
+    animation-delay: 50ms;
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-in-from-bottom {
+  from { transform: translateY(1rem); }
+  to { transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes instant-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }

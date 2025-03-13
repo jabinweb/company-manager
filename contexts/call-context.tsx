@@ -18,15 +18,21 @@ interface CallContextType {
 
 const CallContext = createContext<CallContextType | null>(null)
 
-export function CallProvider({
-  children,
-  currentUser,
-  sendSSEMessage
-}: {
+interface CallProviderProps {
   children: React.ReactNode
-  currentUser: { id: string; name: string; avatar: string | null }
-  sendSSEMessage: (data: any) => void
-}) {
+  currentUser: { 
+    id: string
+    name: string
+    avatar: string | null 
+  }
+  sendSSEMessage?: (data: any) => void
+}
+
+export function CallProvider({ 
+  children, 
+  currentUser,
+  sendSSEMessage = () => {} // Provide default no-op function
+}: CallProviderProps) {
   const [activeCall, setActiveCall] = useState<CallData | null>(null)
   const [incomingCall, setIncomingCall] = useState<CallData | null>(null)
 
@@ -290,11 +296,14 @@ export function CallProvider({
   return <CallContext.Provider value={value}>{children}</CallContext.Provider>;
 }
 
-export const useCall = () => {
-  const context = useContext(CallContext);
-  if (!context) throw new Error('useCall must be used within CallProvider');
-  return context;
-};
+// Rename useCallContext to useCall for consistency
+export function useCall() {
+  const context = useContext(CallContext)
+  if (!context) throw new Error('useCall must be used within CallProvider')
+  return context
+}
+
+export type { CallData }
 
 
 

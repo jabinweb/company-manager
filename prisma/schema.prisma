@@ -37,16 +37,19 @@ model Asset {
 }
 
 model Attendance {
-  id         String           @id
-  date       DateTime         @default(now())
-  clockIn    DateTime?
-  clockOut   DateTime?
-  status     AttendanceStatus
-  notes      String?
+  id         String           @id @default(uuid())
   employeeId String
-  Employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  status     AttendanceStatus @default(ABSENT)
+  checkIn    DateTime?
+  checkOut   DateTime?
+  overtime   Int? // Add this field for overtime minutes
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  employee   Employee         @relation(fields: [employeeId], references: [id])
+  metadata   Json?            @default("{}")
 
   @@index([employeeId])
+  @@index([createdAt])
 }
 
 model BatchItem {
@@ -81,16 +84,17 @@ model Budget {
 }
 
 model Client {
-  id        String   @id
-  name      String
-  contact   String
-  email     String   @unique
-  phone     String
-  address   Json
-  companyId Int
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
-  Company   Company  @relation(fields: [companyId], references: [id])
+  id             String   @id
+  name           String
+  contact        String
+  email          String   @unique
+  phone          String
+  address        Json
+  companyId      Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now())
+  convertedLeads Lead[]   @relation("ConvertedLead")
+  Company        Company  @relation(fields: [companyId], references: [id])
 
   @@index([companyId])
   @@index([email])
@@ -104,6 +108,9 @@ model Company {
   status                               CompanyStatus     @default(PENDING)
   adminId                              String?           @unique
   logo                                 String?
+  email                                String?
+  phone                                String?
+  settings                             Json?             @default("{}")
   Announcement                         Announcement[]
   Asset                                Asset[]
   Budget                               Budget[]
@@ -120,9 +127,9 @@ model Company {
   SalesOrder                           SalesOrder[]
   Supplier                             Supplier[]
   Task                                 Task[]
-  User_User_companyIdToCompany         User[]            @relation("User_companyIdToCompany")
-  User_User_managedCompanyIdToCompany  User[]            @relation("User_managedCompanyIdToCompany")
-  User_User_primaryCompanyIdToCompany  User[]            @relation("User_primaryCompanyIdToCompany")
+  User_User_companyIdToCompany         User[]            @relation("UserCompany")
+  User_User_managedCompanyIdToCompany  User[]            @relation("CompanyManager")
+  User_User_primaryCompanyIdToCompany  User[]            @relation("UserPrimaryCompany")
   UserCompany                          UserCompany[]
   UserCompanyRole                      UserCompanyRole[]
   StockTransfer                        StockTransfer[]
@@ -156,8 +163,9 @@ model Employee {
   Company_Employee_companyIdToCompany Company           @relation("Employee_companyIdToCompany", fields: [companyId], references: [id], onDelete: Cascade)
   Employee                            Employee?         @relation("EmployeeToEmployee", fields: [managerId], references: [id])
   other_Employee                      Employee[]        @relation("EmployeeToEmployee")
-  user                                User?             @relation("Employee_userIdToUser", fields: [userId], references: [id])
-  userManager                         User?             @relation("Employee_userManagerIdToUser", fields: [userManagerId], references: [id])
+  user                                User?             @relation("UserEmployee", fields: [userId], references: [id], map: "Employee_userProfile_fkey")
+  userManager                         User?             @relation("EmployeeToManager", fields: [userManagerId], references: [id], map: "Employee_manager_fkey")
+  managedBy                           User?             @relation("ManagerToEmployee", fields: [userId], references: [id], map: "Employee_managedBy_fkey")
   LeaveRequest                        LeaveRequest[]
   LeaveRequestActionsPerformed        LeaveRequest[]    @relation("LeaveRequestActions")
   Payslip                             Payslip[]
@@ -168,6 +176,9 @@ model Employee {
   SentMessages                        Message[]         @relation("SentMessages")
   ReceivedMessages                    Message[]         @relation("ReceivedMessages")
   salary                              EmployeeSalary[]
+  assignedLeads                       Lead[]            @relation("AssignedLeads")
+  LeadActivity                        LeadActivity[]
+  LeadDocument                        LeadDocument[]
 
   @@index([companyId])
   @@index([email])
@@ -282,6 +293,7 @@ model Message {
   type       MessageType   @default(TEXT)
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
+  readAt     DateTime?
 
   @@index([senderId])
   @@index([receiverId])
@@ -486,31 +498,32 @@ model Task {
 }
 
 model User {
-  id                                     Int               @id @default(autoincrement())
-  name                                   String
-  email                                  String            @unique
-  password                               String
-  role                                   Role              @default(ADMIN)
-  createdAt                              DateTime          @default(now())
-  status                                 UserStatus        @default(PENDING)
-  image                                  String?
-  primaryCompanyId                       Int
-  managedCompanyId                       Int?
-  companyId                              Int
-  employeeProfile                        Employee?         @relation("Employee_userIdToUser")
-  managedEmployees                       Employee[]        @relation("Employee_userManagerIdToUser")
-  Company_User_companyIdToCompany        Company           @relation("User_companyIdToCompany", fields: [companyId], references: [id])
-  Company_User_managedCompanyIdToCompany Company?          @relation("User_managedCompanyIdToCompany", fields: [managedCompanyId], references: [id])
-  Company_User_primaryCompanyIdToCompany Company           @relation("User_primaryCompanyIdToCompany", fields: [primaryCompanyId], references: [id])
-  UserCompany                            UserCompany[]
-  UserCompanyRole                        UserCompanyRole[]
-  UserSettings                           UserSettings?
-  UserSession                            UserSession[]
+  id                 Int               @id @default(autoincrement())
+  email              String            @unique
+  password           String
+  name               String
+  role               Role
+  status             UserStatus
+  image              String?
+  createdAt          DateTime          @default(now())
+  companyId          Int
+  primaryCompanyId   Int
+  managedCompanyId   Int?
+  company            Company           @relation("UserCompany", fields: [companyId], references: [id])
+  primaryCompany     Company           @relation("UserPrimaryCompany", fields: [primaryCompanyId], references: [id])
+  managedCompany     Company?          @relation("CompanyManager", fields: [managedCompanyId], references: [id])
+  employeeProfile    Employee?         @relation("UserEmployee")
+  managedEmployees   Employee[]        @relation("EmployeeToManager")
+  managedByEmployees Employee[]        @relation("ManagerToEmployee")
+  userCompanies      UserCompany[]
+  userCompanyRoles   UserCompanyRole[]
+  sessions           UserSession[]
+  UserSettings       UserSettings?
+  EmployeeSalary     EmployeeSalary[]
 
   @@index([companyId])
-  @@index([email])
-  @@index([managedCompanyId])
   @@index([primaryCompanyId])
+  @@index([managedCompanyId])
 }
 
 model UserSession {
@@ -522,6 +535,7 @@ model UserSession {
   createdAt  DateTime @default(now())
   lastActive DateTime @default(now())
   isValid    Boolean  @default(true)
+  metadata   Json?    @default("{}") // Add this field
   user       User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
@@ -579,9 +593,13 @@ model EmployeeSalary {
   effectiveFrom    DateTime @default(now())
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-  employee         Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdById      Int
+
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id])
 
   @@index([employeeId])
+  @@index([createdById])
 }
 
 enum AttendanceStatus {
@@ -625,6 +643,107 @@ enum EmploymentType {
   INDEPENDENT_CONTRACTOR
   VOLUNTEER
   SELF_EMPLOYED
+}
+
+enum LeadSource {
+  WEBSITE
+  REFERRAL
+  SOCIAL_MEDIA
+  DIRECT
+  EMAIL
+  PHONE
+  EVENT
+  OTHER
+}
+
+model Lead {
+  id                String     @id @default(cuid())
+  name              String
+  email             String?
+  phone             String?
+  company           String?
+  sourceType        LeadSource @default(WEBSITE)
+  status            LeadStatus @default(NEW)
+  priority          Priority   @default(MEDIUM)
+  employeeId        String
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  description       String?    @db.Text
+  convertedAt       DateTime?
+  convertedClientId String?    @unique
+
+  // Relations
+  assignedTo      Employee       @relation("AssignedLeads", fields: [employeeId], references: [id])
+  convertedClient Client?        @relation("ConvertedLead", fields: [convertedClientId], references: [id])
+  activities      LeadActivity[]
+  documents       LeadDocument[]
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([sourceType])
+  @@index([convertedClientId])
+}
+
+model LeadActivity {
+  id          String       @id @default(uuid())
+  lead        Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId      String
+  type        ActivityType
+  description String       @db.Text
+  employee    Employee     @relation(fields: [employeeId], references: [id])
+  employeeId  String
+  dueDate     DateTime?
+  completed   Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([leadId])
+  @@index([employeeId])
+}
+
+model LeadDocument {
+  id         String   @id @default(uuid())
+  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId     String
+  name       String
+  type       String
+  url        String
+  uploadedBy Employee @relation(fields: [employeeId], references: [id])
+  employeeId String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([leadId])
+  @@index([employeeId])
+}
+
+enum ActivityType {
+  NOTE
+  CALL
+  EMAIL
+  MEETING
+  TASK
+  FOLLOW_UP
+  PROPOSAL
+  OTHER
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+  ON_HOLD
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
 
 enum LeaveStatus {

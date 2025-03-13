@@ -1,90 +1,177 @@
 'use client'
 
-import { useSession } from "@/hooks/use-session"
-import { useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
-import { Loader2 } from "lucide-react"
-import { ProfileCard } from "@/components/employee/profile-card"
-import { QuickActions } from "@/components/employee/quick-actions"
-import { EmployeeTasks } from "@/components/employee/employee-tasks"
-import { AnnouncementsCard } from "@/components/employee/announcements-card"
-
-interface EmployeeData {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  jobTitle: string;
-  department: string;
-  dateJoined: string;
-  role: string;
-  employmentType: string;
-  status: string;
-  avatar?: string;
-  company: {
-    id: number;
-    name: string;
-    status: string;
-  };
-}
+import { useState } from 'react'
+import { addDays } from 'date-fns'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmployeeTasks } from '@/components/employee/employee-tasks'
+import { LeadActivityList } from '@/components/employee/lead/lead-activity-list'
+import { KeyMetrics } from '@/components/dashboard/key-metrics'
+import { SalesPipeline } from '@/components/dashboard/sales-pipeline'
+import { DateRangePicker } from '@/components/dashboard/date-range-picker'
+import { useQuery } from '@tanstack/react-query'
+import {
+  Alert,
+  AlertTitle,
+  AlertDescription,
+} from "@/components/ui/alert"
+import { Button } from '@/components/ui/button'
+import { CalendarDays, AlertCircle } from 'lucide-react'
+import type { DashboardStats } from '@/types/dashboard'
 
 export default function EmployeeDashboard() {
-  const { data: session, status } = useSession()
-  const router = useRouter()
-  const [employeeData, setEmployeeData] = useState<EmployeeData | null>(null)
+  const [startDate, setStartDate] = useState<Date>(new Date())
+  const [endDate, setEndDate] = useState<Date>(addDays(new Date(), 30))
 
-  useEffect(() => {
-    if (status === "loading") return
-    if (status === "authenticated") {
-      fetchEmployeeData()
+  const { data: stats, isLoading: isStatsLoading } = useQuery<DashboardStats>({
+    queryKey: ['employeeStats', { startDate, endDate }],
+    queryFn: async () => {
+      const res = await fetch(`/api/employee/dashboard/stats?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`)
+      if (!res.ok) throw new Error('Failed to fetch stats')
+      return res.json()
     }
-  }, [status, router])
-
-  const fetchEmployeeData = async () => {
-    try {
-      const response = await fetch('/api/employee/profile')
-      if (!response.ok) {
-        throw new Error('Failed to fetch employee data')
-      }
-      const data = await response.json()
-      setEmployeeData(data)
-    } catch (error) {
-      console.error('Failed to fetch employee data:', error)
-    }
-  }
-
-  if (status === "loading" || !employeeData) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
-    )
-  }
+  })
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <h1 className="text-3xl font-bold">Welcome, {employeeData.name}</h1>
-      
-      {/* Top Row - Profile and Quick Actions */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <ProfileCard 
-          name={employeeData.name}
-          email={employeeData.email}
-          department={employeeData.department}
-          jobTitle={employeeData.jobTitle}
-          status={employeeData.status}
-          companyName={employeeData.company.name}
-          avatar={employeeData.avatar}
-        />
-        <QuickActions />
+    <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">
+      {/* Header Section */}
+      <div className="flex items-center justify-between space-y-2">
+        <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+        <div className="flex items-center space-x-2">
+          <DateRangePicker
+            startDate={startDate}
+            endDate={endDate}
+            onStartDateChange={setStartDate}
+            onEndDateChange={setEndDate}
+          />
+        </div>
       </div>
 
-      {/* Middle Row - Recent Tasks and Leave Requests */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <EmployeeTasks employeeId={employeeData.id} />
-        <AnnouncementsCard companyId={employeeData.company.id} />
+      {/* Alerts Section */}
+      {stats?.overdueTasks && stats.overdueTasks > 0 && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Attention Required</AlertTitle>
+          <AlertDescription>
+            You have {stats.overdueTasks} overdue tasks that need immediate attention.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Quick Actions */}
+      <div className="flex gap-4">
+        <Button>
+          <CalendarDays className="mr-2 h-4 w-4" />
+          Schedule Follow-up
+        </Button>
+        {/* Add more quick actions */}
       </div>
 
+      {/* Stats Overview */}
+      <KeyMetrics isLoading={isStatsLoading} data={stats} />
+
+      {/* Main Content Grid */}
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-7">
+        {/* Left side - Charts */}
+        <div className="lg:col-span-4 space-y-4">
+          <SalesPipeline />
+          <Card>
+            <CardHeader>
+              <CardTitle>Performance Overview</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {stats && (
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <span>Monthly Target</span>
+                    <span>{stats.monthlyTarget}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Current Progress</span>
+                    <span>{stats.targetProgress}%</span>
+                  </div>
+                  {/* Add progress bar */}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Right side - Tasks & Activities */}
+        <div className="lg:col-span-3 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Today&apos;s Priority</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <EmployeeTasks 
+                limit={5}
+                showOnlyToday={true}
+                priority="HIGH"
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Activities</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <LeadActivityList limit={5} showTimeline />
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Detailed Tabs */}
+      {/* <Tabs defaultValue="overview" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="leads">
+            Leads ({stats?.totalLeads?.toString() || '0'})
+          </TabsTrigger>
+          <TabsTrigger value="activities">Activities</TabsTrigger>
+          <TabsTrigger value="tasks">
+            Tasks ({stats?.pendingTasks?.toString() || '0'})
+          </TabsTrigger>
+          <TabsTrigger value="follow-ups">
+            Follow-ups ({stats?.pendingFollowUps?.toString() || '0'})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview">
+          <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+            <LeadActivityList limit={10} />
+            <EmployeeTasks limit={10} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="leads">
+          <Card>
+            <CardContent className="py-4">
+              <EmployeeLeadTable 
+                pageSize={10}
+                showPagination={true}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="activities">
+          <Card>
+            <CardContent className="py-4">
+              <LeadActivityList limit={10} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="tasks">
+          <Card>
+            <CardContent className="py-4">
+              <EmployeeTasks limit={10} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs> */}
     </div>
   )
 }

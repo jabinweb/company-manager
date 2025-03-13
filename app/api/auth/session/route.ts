@@ -1,45 +1,64 @@
 import { NextResponse } from 'next/server'
 import { getAuthCookie, verifyJWTApi } from '@/lib/jwt'
 import { prisma } from '@/lib/prisma'
+// import { debugAuthConfig } from '@/config/auth'
 
 export async function GET() {
   try {
+    // debugAuthConfig() // Log auth config
+
     const token = await getAuthCookie()
+    // console.log('[Session] Token from cookie:', token ? 'present' : 'missing')
+    
     if (!token) {
-      return NextResponse.json({ success: false, user: null })
+      return NextResponse.json({ user: null, error: 'No token' })
     }
 
     const payload = await verifyJWTApi(token)
-    if (!payload) {
-      return NextResponse.json({ success: false, user: null })
+    // console.log('[Session] Token verification:', {
+    //   isValid: !!payload,
+    //   userId: payload?.id,
+    //   sessionId: payload?.sessionId
+    // })
+
+    if (!payload?.sessionId) {
+      return NextResponse.json({ user: null, error: 'Invalid token' })
     }
 
-    return NextResponse.json({
-      success: true,
-      user: {
-        ...payload,
-        isValid: true
-      }
-    })
-  } catch (error) {
-    console.error('Session error:', error)
-    return NextResponse.json({ success: false, user: null })
-  }
-}
-
-async function validateSession(sessionId: string, userId: number): Promise<boolean> {
-  try {
     const session = await prisma.userSession.findFirst({
       where: {
-        id: sessionId,
-        userId: userId,
+        id: payload.sessionId,
+        userId: payload.id,
         isValid: true,
         expiresAt: { gt: new Date() }
       }
     })
-    return !!session
+
+    // console.log('[Session] Database session:', {
+    //   found: !!session,
+    //   isValid: session?.isValid,
+    //   expiresAt: session?.expiresAt
+    // })
+
+    if (!session) {
+      return NextResponse.json({ user: null, error: 'Invalid session' })
+    }
+
+    // Update session last active time
+    await prisma.userSession.update({
+      where: { id: session.id },
+      data: { lastActive: new Date() }
+    })
+
+    return NextResponse.json({
+      user: payload,
+      token
+    })
   } catch (error) {
-    console.error('Session validation error:', error)
-    return false
+    // console.error('[Session] Error:', error)
+    return NextResponse.json({ 
+      user: null, 
+      error: error instanceof Error ? error.message : 'Unknown error'
+    })
   }
 }

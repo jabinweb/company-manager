@@ -2,7 +2,7 @@
 
 import { useSession } from "@/hooks/use-session"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { PayslipCard } from "@/components/employee/payslip-card"
+import { PayslipCard } from "@/components/employee/payroll/payslip-card"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, Download } from "lucide-react"
 

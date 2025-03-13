@@ -20,6 +20,12 @@ export interface ChatUser {
   avatar: string | null;
 }
 
+export interface CallUser {
+  id: string;
+  name: string;
+  avatar: string | null;
+}
+
 export interface ChatState {
   messages: Message[];
   isLoading: boolean;
@@ -35,7 +41,6 @@ export interface ChatContextType {
   sendMessage: (content: string, receiverId: string) => void;
   isTyping: boolean;
   onlineUsers: Set<string>;
-  sendTextMessage: (content: string, receiverId: string) => Promise<void>;
   isLoading: boolean;
   selectedChat: string | null;
   setSelectedChat: (userId: string) => void;
@@ -46,7 +51,6 @@ export interface ChatContextType {
   acceptCall: () => void;
   rejectCall: () => void;
   endCall: () => void;
-  wsRef: React.MutableRefObject<WebSocket | null>;
   currentUserId: string;
   notifyTyping: (receiverId: string) => void;
 }

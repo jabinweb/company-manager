@@ -1,146 +1,110 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
-import { useSession } from './use-session';
-import type { MessageAPIPayload } from '@/types/messages';
+'use client'
 
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSession } from './use-session'
+import type { MessageAPIPayload } from '@/types/messages'
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
+interface SSEOptions {
+  url?: string
+  onMessage?: (event: MessageEvent) => void
+  onError?: (error: Event) => void
+  retry?: boolean
+  retryInterval?: number
+  maxRetries?: number
+}
 
-export function useSSE() {
-  const { data: session } = useSession();
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const messageHandlerRef = useRef<((event: MessageEvent) => void) | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+interface SSEHookReturn {
+  status: ConnectionStatus
+  send: (message: any) => void
+  addHandler: (type: string, handler: (data: any) => void) => void
+}
 
+export function useSSE(options: SSEOptions = {}): SSEHookReturn {
+  const { data: session } = useSession()
+  const [status, setStatus] = useState<ConnectionStatus>('disconnected')
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const handlersRef = useRef<Record<string, (data: any) => void>>({})
+  const messageQueueRef = useRef<MessageAPIPayload[]>([])
+  const retryTimeoutRef = useRef<NodeJS.Timeout>()
 
-  const connect = useCallback(() => {
-    if (!session?.user?.employeeId || eventSourceRef.current) return;
-
-
-    try {
-      const connectionId = Date.now().toString();
-      const eventSource = new EventSource(`/api/sse?connectionId=${connectionId}`);
-      eventSourceRef.current = eventSource;
-      setConnectionStatus('connecting');
-
-
-      eventSource.onopen = () => {
-        console.log('[SSE] 🔌 Connected');
-        setConnectionStatus('connected');
-      };
-
-
-      eventSource.onmessage = (event) => {
-        try {
-          messageHandlerRef.current?.(event);
-        } catch (error) {
-          console.error('[SSE] Message handling error:', error);
-        }
-      };
-
-
-      eventSource.onerror = (error) => {
-        console.error('[SSE] Connection error:', error);
-        eventSource.close();
-        setConnectionStatus('disconnected');
-       
-        // Attempt to reconnect after a delay
-        reconnectTimeoutRef.current = setTimeout(connect, 3000);
-      };
-
-
-      return () => {
-        console.log('[SSE] Cleaning up connection');
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current);
-        }
-        eventSource.close();
-        eventSourceRef.current = null;
-        setConnectionStatus('disconnected');
-      };
-    } catch (error) {
-      console.error('[SSE] Setup error:', error);
-      setConnectionStatus('disconnected');
-    }
-  }, [session?.user?.employeeId]);
-
-
-  const sendMessage = useCallback(async (data: MessageAPIPayload) => {
-    try {
-      console.log('[SSE] Sending message:', data);
-
-
-      // For new messages, save to database first
-      if (data.type === 'new_message') {
-        const dbResponse = await fetch('/api/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data)
-        });
-       
-        if (!dbResponse.ok) {
-          const error = await dbResponse.json();
-          console.error('[SSE] Database save failed:', error);
-          throw new Error('Failed to save message');
-        }
-       
-        const result = await dbResponse.json();
-        console.log('[SSE] Message saved:', result);
-
-
-        // Send through SSE for real-time delivery
-        const sseResponse = await fetch('/api/sse', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(result.data)
-        });
-
-
-        if (!sseResponse.ok) {
-          console.error('[SSE] Real-time delivery failed:', await sseResponse.text());
-          throw new Error('Failed to send through SSE');
-        }
-
-
-        return result;
-      }
-
-
-      // For other types (typing, status), just send through SSE
-      const response = await fetch('/api/sse', {
+  const send = useCallback((message: MessageAPIPayload) => {
+    if (status === 'connected') {
+      fetch('/api/messages/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-
-
-      if (!response.ok) throw new Error('Failed to send message');
-      return { success: true };
-    } catch (error) {
-      console.error('[SSE] Send error:', error);
-      throw error;
+        body: JSON.stringify(message)
+      }).catch(error => {
+        console.error('[SSE] Send error:', error)
+        messageQueueRef.current.push(message)
+      })
+    } else {
+      messageQueueRef.current.push(message)
     }
-  }, []);
+  }, [status])
 
+  const connect = useCallback(() => {
+    if (!session?.token) return
 
-  const setMessageHandler = useCallback((handler: (event: MessageEvent) => void) => {
-    messageHandlerRef.current = handler;
-  }, []);
+    try {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+      }
 
+      setStatus('connecting')
+      const source = new EventSource(`/api/sse?token=${session.token}`)
+      eventSourceRef.current = source
 
-  // Set up connection
+      source.onopen = () => {
+        setStatus('connected')
+        // Process queued messages
+        while (messageQueueRef.current.length > 0) {
+          const msg = messageQueueRef.current.shift()
+          if (msg) send(msg)
+        }
+      }
+
+      source.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          handlersRef.current[data.type]?.(data)
+          options.onMessage?.(event)
+        } catch (error) {
+          console.error('[SSE] Message error:', error)
+        }
+      }
+
+      source.onerror = () => {
+        source.close()
+        setStatus('disconnected')
+        retryTimeoutRef.current = setTimeout(connect, 3000)
+      }
+    } catch (error) {
+      console.error('[SSE] Connect error:', error)
+      setStatus('disconnected')
+    }
+  }, [session?.token, options.onMessage, send])
+
   useEffect(() => {
-    const cleanup = connect();
-    return () => cleanup?.();
-  }, [connect]);
+    if (session?.token) {
+      connect()
+    }
+    return () => {
+      retryTimeoutRef.current && clearTimeout(retryTimeoutRef.current)
+      eventSourceRef.current?.close()
+    }
+  }, [connect, session?.token])
 
+  const addHandler = useCallback((type: string, handler: (data: any) => void) => {
+    handlersRef.current[type] = handler
+  }, [])
 
   return {
-    sendMessage,
-    setMessageHandler,
-    connectionStatus
-  };
+    status,
+    send,
+    addHandler
+  }
 }
 
 

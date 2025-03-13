@@ -1,5 +1,6 @@
 'use client'
 
+import { useSession } from "@/hooks/use-session";
 import { Card } from "@/components/ui/card";
 import { Building2, Users, ShieldCheck } from "lucide-react";
 

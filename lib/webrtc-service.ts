@@ -1,18 +1,31 @@
 const getIceServers = () => {
   try {
-    return JSON.parse(process.env.NEXT_PUBLIC_STUN_SERVERS || '[]');
+    // Add more validation and error handling
+    const servers = process.env.NEXT_PUBLIC_STUN_SERVERS;
+    if (!servers) {
+      return getDefaultStunServers();
+    }
+
+    const parsed = typeof servers === 'string' ? JSON.parse(servers) : servers;
+    if (!Array.isArray(parsed)) {
+      return getDefaultStunServers();
+    }
+
+    return parsed;
   } catch (error) {
     console.error('[WebRTC] Failed to parse STUN servers:', error);
-    return [
-      {
-        urls: [
-          'stun:stun.l.google.com:19302',
-          'stun:stun1.l.google.com:19302'
-        ]
-      }
-    ];
+    return getDefaultStunServers();
   }
 };
+
+const getDefaultStunServers = () => [
+  {
+    urls: [
+      'stun:stun.l.google.com:19302',
+      'stun:stun1.l.google.com:19302'
+    ]
+  }
+];
 
 const ICE_CONFIGURATION = {
   iceServers: getIceServers(),
@@ -267,6 +280,11 @@ class WebRTCService implements IWebRTCService {
   }
 
   private emitSignalingMessage(message: any) {
+    // Only send SSE messages if we're in messages route
+    if (typeof window !== 'undefined' && !window.location.pathname.includes('/messages')) {
+      return;
+    }
+
     // Add retry logic for signaling messages
     const sendWithRetry = async (retries = 3) => {
       try {

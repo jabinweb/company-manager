@@ -1,4 +1,6 @@
-import { useSession } from '@/hooks/use-session';
+'use client'
+
+import { useSession } from "@/hooks/use-session"
 import { AdminNav } from "@/components/navigation/admin-nav";
 
 export default function AdminLayout({

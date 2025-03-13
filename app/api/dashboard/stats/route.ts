@@ -1,11 +1,18 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getServerSession } from '@/lib/server-session'
+import { NextRequest } from 'next/server'
+import { getAuthFromRequest, unauthorized } from '@/lib/api-utils'
+import { prisma } from '@/lib/prisma'
+import { createApiHandler } from '@/lib/api-utils'
 
-export async function GET() {
+export const GET = createApiHandler(async (req: NextRequest) => {
+  const auth = await getAuthFromRequest(req)
+  
+  if (!auth?.isValid) {
+    return unauthorized()
+  }
+
   try {
-    const session = await getServerSession()
-    if (!session?.user?.currentCompanyId) {
+    const user = await getAuthFromRequest(req)
+    if (!user?.currentCompanyId) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' }
@@ -19,16 +26,16 @@ export async function GET() {
       projectsCount
     ] = await Promise.all([
       prisma.employee.count({
-        where: { companyId: session.user.currentCompanyId }
+        where: { companyId: user.currentCompanyId }
       }),
       prisma.client.count({
-        where: { companyId: session.user.currentCompanyId }
+        where: { companyId: user.currentCompanyId }
       }),
       prisma.product.count({
-        where: { companyId: session.user.currentCompanyId }
+        where: { companyId: user.currentCompanyId }
       }),
       prisma.project.count({
-        where: { companyId: session.user.currentCompanyId }
+        where: { companyId: user.currentCompanyId }
       })
     ])
 
@@ -43,13 +50,10 @@ export async function GET() {
     })
 
   } catch (error) {
-    console.error('Dashboard stats error:', error)
-    return new Response(JSON.stringify({
-      error: "Failed to fetch stats",
-      details: error instanceof Error ? error.message : undefined
-    }), {
+    console.error('[Dashboard Stats] Error:', error)
+    return new Response(JSON.stringify({ error: 'Failed to fetch stats' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     })
   }
-}
+})
